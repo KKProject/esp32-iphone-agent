@@ -21,6 +21,7 @@
 #include "video_link.h"
 #include "cli_link.h"
 #include "cli_tcp.h"
+#include "app_tcp.h"
 #include "wifi_video.h"
 #include "ota.h"
 #include "version.h"
@@ -177,13 +178,29 @@ static heard_ring *heardRing() {
   return r;
 }
 
+static uint32_t networkRestartAt;
+
 String board(const String &line, const String &id, char who) {
   int sp = line.indexOf(' ');
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   long a = 0, b = 0;
   int n = sscanf(arg.c_str(), "%ld %ld", &a, &b);
-  if (who == FROM_CLI && !arb_allowed(ARB_CLI, ble_app_active()) && cmd != "crash") return APP_BUSY;
+  if (who == FROM_CLI && !arb_allowed(ARB_CLI, ble_app_active() || app_tcp_active()) && cmd != "crash") return APP_BUSY;
+  if (cmd == "netonly") {
+    bool networkPeer = who == FROM_CLI ? cli_wifi() : app_tcp_connected();
+    if (!networkPeer || !net_up()) return "err requires an authenticated Wi-Fi session";
+    if (arg != "on" && arg != "off") return "err usage: netonly on|off";
+    bool enabled = arg == "on";
+    if (enabled == net_only()) return "ok";
+    if (!net_set_only(enabled)) return "err failed to save network mode";
+    networkRestartAt = millis() + 1500;  // let the authenticated TCP acknowledgement leave first
+    return "ok";
+  }
+  if (cmd == "appnet") {
+    if (who != FROM_APP) return "err app only";
+    return "ok " + net_json(true);
+  }
   if (cmd == "stream") {
     if (arg != "on" && arg != "off") return "err usage: stream on|off";
     video_stream(arg == "on", who);
@@ -195,7 +212,7 @@ String board(const String &line, const String &id, char who) {
     return "err not available from the CLI";
   if (cmd == "net" && who == FROM_CLI) {  // the board's Wi-Fi for the CLI's link (docs/cli-protocol.md, "Wi-Fi link")
     if (arg.length()) {
-      if (!arg.startsWith("{")) return "err usage: net [{\"mode\":\"ap\"} | {\"mode\":\"sta\",\"ssid\":...,\"pass\":...}]";
+      if (!arg.startsWith("{")) return "err usage: net [{\"mode\":\"sta\",\"ssid\":...,\"pass\":...}]";
       net_request(arg);  // applied by net_poll(): the reply goes out first
       return "ok";
     }
@@ -251,7 +268,7 @@ String board(const String &line, const String &id, char who) {
     airplay_set_display(cfg_width(), cfg_height(), a);
     return "ok";
   }
-  if (cmd == "txpower") {  // A/B knob in 0.25 dBm (8-84), not stored: every boot starts at 5 dBm
+  if (cmd == "txpower") {  // A/B knob in 0.25 dBm (8-84), not stored: every boot starts at 11 dBm
     if (n < 1 || a < 8 || a > 84 || esp_wifi_set_max_tx_power(a) != ESP_OK) return "err usage: txpower 8-84";
     return "ok";
   }
@@ -283,7 +300,7 @@ String statusJson(bool full, char who) {
            (unsigned long)ble_reply_drops(), ble_peers(), wv_active(), (unsigned long)wv_kbps(),
            (unsigned long)wv_nacks(), (unsigned long)wv_drops());
   // owner: who drives the phone (app, cli, none); the CLI's busy is 1 while that is the app
-  bool app = ble_app_active();
+  bool app = ble_app_active() || app_tcp_active();
   if (who == FROM_CLI) {  // the CLI's own link, not the app's (ble.mtu above is the app's)
     size_t l = strlen(s);
     snprintf(s + l - 1, sizeof s - l + 1, ",\"link\":{\"via\":\"%s\",\"mtu\":%u,\"kbps\":%lu}}", cli_wifi() ? "wifi" : "ble",
@@ -317,10 +334,12 @@ String statusJson(bool full, char who) {
 void statusTask(void *) {
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(1000));
-    if (!ble_connected()) continue;
-    String s = statusJson(true, FROM_APP);
-    if (s.length() > ble_mtu() - 3u) s = statusJson(false, FROM_APP);
-    ble_status(s);
+    if (ble_connected()) {
+      String s = statusJson(true, FROM_APP);
+      if (s.length() > ble_mtu() - 3u) s = statusJson(false, FROM_APP);
+      ble_status(s);
+    }
+    if (app_tcp_connected()) app_tcp_send('s',statusJson(true,FROM_APP));
     if (cli_slot() >= 0) ble_cli_status(statusJson(true, FROM_CLI), statusJson(false, FROM_CLI));
   }
 }
@@ -395,6 +414,7 @@ void setup() {
   cli_begin();
   if (!cli_tcp_begin()) board_log("cli: Wi-Fi link failed to start");
   ble_begin("ESP32 Agent " + board_suffix());
+  if (!app_tcp_begin()) board_log("app: network channel failed to start");
   startAirplay();
   xTaskCreatePinnedToCore(statusTask, "status", 4096, NULL, 1, NULL, 1);
   board_log("boot %s fw %s: free internal heap %u (largest %u), PSRAM %u, reset %s\n", receiverName.c_str(), FW_VERSION,
@@ -407,9 +427,11 @@ void loop() {
   static bool linked = false, cliLinked = false;
   esp_task_wdt_reset();
   net_poll();
+  if (networkRestartAt && (int32_t)(millis() - networkRestartAt) >= 0) ESP.restart();
   bool cli = cli_slot() >= 0;
   // A gesture cut off mid-way must not leave the button held (long press); only the side that went holds it.
-  bool app = ble_app_connected(), appActive = ble_app_active();
+  bool app = ble_app_connected() || app_tcp_connected();
+  bool appActive = ble_app_active() || app_tcp_active();
   if (linked && !app) {
     if (arb_gone(&arb, ARB_APP)) mouse.release(MOUSE_LEFT);
     keyboard.releaseAll();
@@ -458,6 +480,12 @@ void loop() {
     serialLine = "";
     line.trim();
     if (line.startsWith("0 net ")) { net_request(line.substring(6)); Serial.println("0 ok"); return; }
+    if (line == "0 setup") {
+      if (!net_set_only(false)) { Serial.println("0 err failed to save setup mode"); return; }
+      Serial.println("0 ok restoring BLE setup");
+      networkRestartAt = millis() + 500;
+      return;
+    }
     if (line == "0 netinfo") { Serial.println("0 " + net_json(true)); return; }  // what the app reads over BLE (incl. vtok)
     if (line == "0 status") { Serial.println("0 " + statusJson(true, FROM_APP)); return; }
     int sp = line.indexOf(' ');

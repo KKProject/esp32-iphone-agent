@@ -44,10 +44,12 @@ never by the OS, so stale Bluetooth bonds don't matter. Keys live in the user co
 | `screencapture --format h264\|mjpeg` | live video to stdout, e.g. `\| ffplay -` |
 | `device info` | board status: `ap` (mirroring), `fz` (video frozen), `busy` (the app holds the phone), `usb`, `ble` |
 | `calibrate` | measure the pointer (runs by itself on the first tap; needs the pointer visible) |
-| `net` | the CLI's link (`via`: `ble` or `wifi`) and the board's Wi-Fi. With this computer on the board's network (same Wi-Fi, or its hotspot) commands and video go over Wi-Fi; BLE stays as the way back |
+| `net` | the CLI's link (`via`: `ble` or `wifi`) and the board's Wi-Fi. With this computer on the board's network (same Wi-Fi, or its hotspot) the authenticated handoff saves the endpoint and disables BLE; commands and video then use Wi-Fi only |
 | `net join` | asks for your Wi-Fi's name and password (not echoed), sends them to the board over the Bluetooth session, and waits until the link moves to Wi-Fi. `net join SSID [PASSWORD]` does it without asking. The iPhone mirrors over that Wi-Fi too |
 | `net hotspot` | the board opens its own hotspot again |
-| `net via auto\|ble` | `ble` keeps the session on BLE (also `ESP32AGENT_TRANSPORT=ble`) |
+| `net via auto\|ble` | default `auto` provisions over BLE, then disables BLE; the `ble` override is for provisioning diagnostics only |
+| `net address IP` | update a configured board’s saved IP after a DHCP change |
+| `net setup` | restore BLE provisioning; use USB recovery too if the network is unreachable |
 | `listen` | what the iPhone played in the last 30 s (a video, a call, an app's voice) as words, or why it can't be heard |
 | `listen on\|off` | hear the phone's sound while it mirrors (off by default; kept in the config) |
 | `listen mode phone\|local` | `phone` (default): the words the ESP32 Agent app transcribed on the iPhone (turn on Settings › Listen to phone audio and Share with the computer there). `local`: the raw audio over Wi-Fi, transcribed here by whisper.cpp |
@@ -130,3 +132,9 @@ windows (pure Go) for amd64/arm64 and uploads the archives with `checksums.txt`.
 artifact ([format](install/versions.example.json)); merging it into `https://handsy.tech/cli/versions.json` is
 manual. `ESP32AGENT_VERSIONS_URL` points `upgrade` and the installers at another list (tests). Installer testing:
 `ESP32AGENT_ARCHIVE=/path/esp32agent_darwin_arm64.tar.gz sh cli/install/install.sh` (checksums.txt next to it).
+
+### BLE provisioning, network-only operation
+
+This local variant requires the matching CLI and firmware builds. In default `auto` mode, BLE is used for pairing and `net join`. After authenticated TCP commands succeed, the CLI saves the board address and pairing key, sends `netonly on`, and releases its BLE connection. The board persists the setting and restarts once; subsequent boots never initialize the Bluetooth controller. Commands and video use TCP/Wi-Fi, including reconnection after daemon/board restarts. The iPhone app's BLE control is unavailable in this mode too. Network outages do not re-enable BLE.
+
+Reserve the board's DHCP address when possible. If it changes, run `esp32agent net address NEW_IP --device BOARD_ID`. To provision again, run `esp32agent net setup`. If the network is unreachable, also connect the board over USB and send `0 setup` followed by a newline at 115200 baud. This restores BLE on reboot without erasing pairing keys. Then run `esp32agent net join`. The `net via ble` / `ESP32AGENT_TRANSPORT=ble` override only applies before a network-only handoff.

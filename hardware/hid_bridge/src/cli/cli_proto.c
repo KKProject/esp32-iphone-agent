@@ -120,3 +120,34 @@ int cli_open(const uint8_t key[16], char stream, const uint8_t *frame, size_t n,
   *ctr = c;
   return (int)len;
 }
+
+size_t app_seal(const uint8_t key[16], char stream, uint32_t ctr, const uint8_t *plain, size_t n, uint8_t *out) {
+  uint8_t iv[12];
+  nonce(stream, ctr, iv);
+  out[0] = 0x20;
+  for (int i = 0; i < 4; i++) out[1+i] = (uint8_t)(ctr >> (8*i));
+  mbedtls_gcm_context g;
+  mbedtls_gcm_init(&g);
+  int rc = mbedtls_gcm_setkey(&g, MBEDTLS_CIPHER_ID_AES, key, 128);
+  if (!rc) rc = mbedtls_gcm_crypt_and_tag(&g, MBEDTLS_GCM_ENCRYPT, n, iv, 12, out, CLI_HDR_LEN, plain,
+                                        out + CLI_HDR_LEN, 16, out + CLI_HDR_LEN + n);
+  mbedtls_gcm_free(&g);
+  return rc ? 0 : n + APP_OVERHEAD;
+}
+
+int app_open(const uint8_t key[16], char stream, const uint8_t *frame, size_t n, uint32_t *ctr, uint8_t *plain) {
+  if (n < APP_OVERHEAD || frame[0] != 0x20) return -1;
+  uint32_t c = 0;
+  for (int i = 0; i < 4; i++) c |= (uint32_t)frame[1+i] << (8*i);
+  uint8_t iv[12];
+  nonce(stream,c,iv);
+  size_t len = n - APP_OVERHEAD;
+  mbedtls_gcm_context g;
+  mbedtls_gcm_init(&g);
+  int rc = mbedtls_gcm_setkey(&g, MBEDTLS_CIPHER_ID_AES,key,128);
+  if (!rc) rc = mbedtls_gcm_auth_decrypt(&g,len,iv,12,frame,CLI_HDR_LEN,frame+CLI_HDR_LEN+len,16,frame+CLI_HDR_LEN,plain);
+  mbedtls_gcm_free(&g);
+  if (rc) return -1;
+  *ctr = c;
+  return (int)len;
+}

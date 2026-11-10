@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import Darwin
 
 /// CoreBluetooth central for the board: scan, connect (bonding happens on the first `net` read), command
 /// writes, status / reply / video notifies. Reconnects on its own; restores state when iOS relaunches the app.
@@ -23,6 +24,15 @@ import Foundation
     @Published private(set) var lastError = ""
     @Published private(set) var pairingLost = false  // iOS and the board disagree about their bond: see forgetBoard
     @Published private(set) var signalStrength: Int?
+
+    @Published private(set) var usingNetwork = false
+    var networkConfigured: Bool { savedNetwork != nil }
+    var networkAddress: String? { savedNetwork?.ip }
+    private let network = AppNetwork()
+    private var savedNetwork: BoardNetworkEndpoint?
+    private var networkTarget: BoardNetworkEndpoint?
+    private var networkSetup: Task<Void, Never>?
+    private static let networkKey = "board-network-endpoint-v1"
 
     let commands = CommandChannel()
     var onVideo: ((Data) -> Void)?
@@ -54,20 +64,49 @@ import Foundation
         pairedID = UserDefaults.standard.string(forKey: Self.pairedKey).flatMap(UUID.init)
         commands.transport = self
         if mock { return }
+        configureNetwork()
+        if let raw = Keychain.get(Self.networkKey)?.data(using: .utf8),
+           let endpoint = try? JSONDecoder().decode(BoardNetworkEndpoint.self, from: raw), endpoint.keyData != nil {
+            savedNetwork = endpoint
+            networkTarget = endpoint
+            pairedID = endpoint.pairedID
+            name = endpoint.name
+            connecting = true
+            DebugLog.redact([endpoint.key])
+            network.start(endpoint)
+            return
+        }
+        startBluetooth()
+    }
+
+    private func startBluetooth() {
+        guard central == nil, !mock else { return }
         central = CBCentralManager(delegate: self, queue: .main, options: [
             CBCentralManagerOptionRestoreIdentifierKey: "iphone-agent-central",
             CBCentralManagerOptionShowPowerAlertKey: true,
         ])
     }
 
-    var isConnected: Bool { connected }
-    var mtu: Int { peripheral.map { $0.maximumWriteValueLength(for: .withoutResponse) + 3 } ?? 0 }
+    var isConnected: Bool { usingNetwork ? network.ready : connected }
+    var mtu: Int { if usingNetwork { return 1100 }; return peripheral.map { $0.maximumWriteValueLength(for: .withoutResponse) + 3 } ?? 0 }
 
     // MARK: - scan / pair
 
     /// Refresh readiness without forgetting pairing or changing streaming/gesture state.
     func refreshStatus() async throws {
         if mock { return }
+        if networkConfigured {
+            network.kick()
+            let end = now() + 8
+            while !connected && now() < end { try await Task.sleep(for: .milliseconds(200)) }
+            guard connected else { throw DeviceError(message: lastError.isEmpty ? "无法通过网络连接开发板，请检查 Wi-Fi 和 IP 地址。" : lastError) }
+            let revision = statusRevision
+            _ = try await commands.send("ping")
+            let deadline = now() + 3
+            while revision == statusRevision && connected && now() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            guard connected, statusRevision != revision else { throw DeviceError(message: "未收到新的开发板状态，请重试。") }
+            return
+        }
         guard state == .poweredOn else {
             throw DeviceError(message: String(localized: "Turn on Bluetooth to refresh the board status."))
         }
@@ -98,6 +137,8 @@ import Foundation
     }
 
     func scan() {
+        if networkConfigured { network.kick(); return }
+        if central == nil { startBluetooth(); return }
         guard state == .poweredOn, !mock, !connected, !connecting, !linking else { return }
         found = []
         lastError = ""
@@ -148,6 +189,12 @@ import Foundation
 
     /// Forget the board in the app only.
     func forget() {
+        networkSetup?.cancel()
+        network.stop()
+        usingNetwork = false
+        savedNetwork = nil
+        networkTarget = nil
+        Keychain.set("", for: Self.networkKey)
         retryTask?.cancel()
         connectionDeadline?.cancel()
         let previous = peripheral
@@ -220,6 +267,7 @@ import Foundation
     }
 
     private func reconnect() {
+        if networkConfigured { network.kick(); return }
         guard state == .poweredOn, !mock, !connected, !connecting, !linking, let id = pairedID else { return }
         if peripheral?.identifier != id {
             peripheral = central.retrievePeripherals(withIdentifiers: [id]).first
@@ -250,6 +298,13 @@ import Foundation
     /// Read the network config (the first read pairs the phone with the board). `fresh`: read it again, e.g. for
     /// the board's address: read while it was still joining Wi-Fi after power-on it stays empty (2026-11-06).
     func readNet(fresh: Bool = false) async throws -> NetConfig {
+        if usingNetwork {
+            if !fresh, let net { return net }
+            let text = try await commands.send("appnet")
+            let config = try JSONDecoder().decode(NetConfig.self, from: Data(text.utf8))
+            self.net = config
+            return config
+        }
         if !fresh, connected, let net { return net }
         guard let peripheral, let c = chars[BoardUUID.net] else { throw DeviceError(message: "board not connected") }
         return try await withCheckedThrowingContinuation { cont in
@@ -259,6 +314,7 @@ import Foundation
     }
 
     func writeNet(_ config: NetConfig) throws {
+        guard !networkConfigured else { throw DeviceError(message: "请先恢复蓝牙配置，再修改开发板的 Wi-Fi。") }
         guard let peripheral, let c = chars[BoardUUID.net] else { throw DeviceError(message: "board not connected") }
         peripheral.writeValue(try JSONEncoder().encode(config), for: c, type: .withResponse)
     }
@@ -267,6 +323,7 @@ import Foundation
 
     func write(_ line: String) throws {
         if mock, connected { return mockReply(line) }
+        if usingNetwork { return try network.write(line) }
         guard let peripheral, let c = chars[BoardUUID.cmd], connected else {
             throw DeviceError(message: "board not connected")
         }
@@ -276,9 +333,10 @@ import Foundation
         peripheral.writeValue(data, for: c, type: fast ? .withoutResponse : .withResponse)  // long writes need a response
     }
 
-    var maxWrite: Int { peripheral?.maximumWriteValueLength(for: .withoutResponse) ?? 20 }
+    var maxWrite: Int { usingNetwork ? 1000 : peripheral?.maximumWriteValueLength(for: .withoutResponse) ?? 20 }
 
     func writeIfIdle(_ line: String) -> Bool {
+        if usingNetwork { return (try? network.write(line)) != nil }
         guard !mock, let peripheral, let c = chars[BoardUUID.cmd], connected,
               c.properties.contains(.writeWithoutResponse), peripheral.canSendWriteWithoutResponse else { return false }
         let data = Data(line.utf8)
@@ -288,6 +346,7 @@ import Foundation
     }
 
     func dropLink() {
+        if networkConfigured { network.reconnect(); return }
         guard let peripheral, !mock else { return }
         central.cancelPeripheralConnection(peripheral)  // didDisconnect reconnects
     }
@@ -307,7 +366,7 @@ import Foundation
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             scanning = false
             mockConnect(name: "ESP32 Agent 7C3E",
-                        net: NetConfig(mode: "ap", ssid: "ESP32Agent-7C3E", pass: "demo-pass", ip: "192.168.4.1"))
+                        net: NetConfig(mode: "sta", ssid: "Home Wi-Fi", ip: "192.168.1.42"))
         }
     }
 
@@ -382,6 +441,7 @@ extension BoardLink: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated {
             state = central.state
+            if networkConfigured { return }
             log("BLE state \(central.state.rawValue)")
             if central.state == .poweredOn {
                 if pairedID == nil && ProcessInfo.processInfo.arguments.contains("-pair-first") { scan() } else { reconnect() }
@@ -391,6 +451,7 @@ extension BoardLink: CBCentralManagerDelegate {
 
     nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
         MainActor.assumeIsolated {
+            if networkConfigured { return }
             if let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first {
                 peripheral = restored
                 restored.delegate = self
@@ -432,6 +493,7 @@ extension BoardLink: CBCentralManagerDelegate {
                                     error: Error?) {
         MainActor.assumeIsolated {
             guard p === peripheral else { return }
+            if networkConfigured { peripheral = nil; return }
             let e = error as NSError?
             DebugLog.write(String(format: "BLE disconnect: %@ %d: %@; last notification %.1f s ago; link up %.0f s",
                                   e?.domain ?? "no error", e?.code ?? 0, e?.localizedDescription ?? "-",
@@ -500,7 +562,7 @@ extension BoardLink: CBPeripheralDelegate {
 
     nonisolated func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
         MainActor.assumeIsolated {
-            guard p === peripheral else { return }
+            guard p === peripheral, !usingNetwork else { return }
             lastNotify = now()
             if c.uuid == BoardUUID.net {
                 let waiters = netWaiters
@@ -527,6 +589,7 @@ extension BoardLink: CBPeripheralDelegate {
                         failures = 0; encryptFailures = 0
                     }
                     waiters.forEach { $0.resume(returning: config) }
+                    considerNetwork(config)
                 } else {
                     waiters.forEach { $0.resume(throwing: DeviceError(message: "bad net config")) }
                 }
@@ -542,9 +605,128 @@ extension BoardLink: CBPeripheralDelegate {
                     statusRevision += 1
                     status = merged
                     onStatus?(merged)
+                    if let net, let ip = merged.ip, ip != "0.0.0.0", !ip.isEmpty {
+                        var config = net
+                        config.ip = ip
+                        considerNetwork(config)
+                    }
                 }
             default: break
             }
         }
+    }
+}
+
+// MARK: - BLE provisioning → encrypted network operation
+extension BoardLink {
+    private func configureNetwork() {
+        network.onReply = { [weak self] in self?.commands.handleReply($0) }
+        network.onStatus = { [weak self] data in
+            guard let self, self.usingNetwork, let status = BoardStatus.decode(data) else { return }
+            self.status = status
+            self.statusRevision += 1
+            // Publish readiness only with a fresh status, so UI gates do not mistake an unknown version for old firmware.
+            if !self.connected { self.connected = true; self.connecting = false }
+            self.onStatus?(status)
+        }
+        network.onReady = { [weak self] in self?.networkReady() }
+        network.onDown = { [weak self] message in
+            guard let self else { return }
+            self.lastError = message
+            guard self.savedNetwork != nil else { return }  // provisioning still has its BLE link
+            self.usingNetwork = false
+            self.setDisconnected()
+            self.connecting = true
+        }
+    }
+
+    private func considerNetwork(_ config: NetConfig) {
+        guard !mock, !networkConfigured, let id = pairedID, let ip = config.ip, !ip.isEmpty, ip != "0.0.0.0",
+              let key = config.atok else { return }
+        let endpoint = BoardNetworkEndpoint(ip: ip, key: key, name: name, pairedID: id)
+        guard endpoint.keyData != nil else { return }
+        DebugLog.redact([key])
+        networkTarget = endpoint
+        network.start(endpoint)
+    }
+
+    private func networkReady() {
+        guard let endpoint = networkTarget else { return }
+        // Save before disabling the radio: after reboot this key is the only way back into the App channel.
+        guard let raw = try? JSONEncoder().encode(endpoint), let value = String(data: raw, encoding: .utf8) else { return }
+        Keychain.set(value, for: Self.networkKey)
+        guard Keychain.get(Self.networkKey) == value else {
+            network.stop()
+            lastError = "无法安全保存开发板连接信息，蓝牙配置仍然保留。"
+            return
+        }
+        savedNetwork = endpoint
+        stopScan()
+        retryTask?.cancel(); connectionDeadline?.cancel(); statusReads?.cancel()
+        commands.linkDown()
+        let waiting = netWaiters
+        netWaiters = []
+        for waiter in waiting {
+            if let net { waiter.resume(returning: net) }
+            else { waiter.resume(throwing: DeviceError(message: "Switching to the network")) }
+        }
+        usingNetwork = true
+        status = nil
+        connected = false
+        connecting = true
+        linking = false
+        signalStrength = nil
+        commands.linkUp()
+        networkSetup?.cancel()
+        networkSetup = Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.readNet(fresh: true)  // refresh the per-boot video token over the encrypted link
+                _ = try await self.commands.send("netonly on")
+                let deadline = now() + 3
+                while !self.connected && self.network.ready && now() < deadline {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                try Task.checkCancellation()
+                guard self.connected, self.usingNetwork else { throw DeviceError(message: "未收到开发板的初始网络状态。") }
+                let previous = self.peripheral
+                self.peripheral = nil
+                self.chars = [:]; self.subscribed = []
+                if let previous { self.central?.cancelPeripheralConnection(previous) }
+                self.lastError = ""
+                LocalNetworkPermission.granted = true
+                self.onLinkUp?()
+                self.log("board ready over encrypted Wi-Fi; BLE provisioning finished")
+            } catch {
+                if !Task.isCancelled { self.lastError = "网络切换未完成：" + error.localizedDescription }
+            }
+        }
+    }
+
+    /// Leave network-only operation deliberately; a network outage never switches back to BLE.
+    func restoreProvisioning() async throws {
+        guard usingNetwork else { throw DeviceError(message: "网络不可达。请通过 USB 串口发送 0 setup，再在 App 中忘记开发板并重新配置。") }
+        _ = try await commands.send("netonly off")
+        forget()
+        startBluetooth()
+        try await Task.sleep(for: .seconds(2))
+        scan()
+    }
+
+    func resumeNetwork() { if networkConfigured { network.kick() } }
+
+    func updateNetworkAddress(_ ip: String) throws {
+        var address = in_addr()
+        guard inet_pton(AF_INET, ip, &address) == 1, ip != "0.0.0.0", var endpoint = savedNetwork else {
+            throw DeviceError(message: "请输入开发板的有效 IPv4 地址。")
+        }
+        endpoint.ip = ip
+        guard let raw = try? JSONEncoder().encode(endpoint), let value = String(data: raw, encoding: .utf8) else { return }
+        Keychain.set(value, for: Self.networkKey)
+        guard Keychain.get(Self.networkKey) == value else { throw DeviceError(message: "无法保存开发板地址。") }
+        savedNetwork = endpoint
+        networkTarget = endpoint
+        network.reconnect()
+        network.start(endpoint)
     }
 }

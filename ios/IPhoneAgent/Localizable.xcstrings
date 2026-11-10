@@ -9522,6 +9522,276 @@
           }
         }
       }
+    },
+    "Couldn't reach the board. Is it connected?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上小板。小板连接好了吗？"
+          }
+        }
+      }
+    },
+    "Enter a Wi-Fi name of up to 32 bytes." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入 Wi-Fi 名称（最多 32 字节）。"
+          }
+        }
+      }
+    },
+    "A Wi-Fi password has 8 to 64 characters. Leave it empty for an open network." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wi-Fi 密码为 8 到 64 个字符。开放网络请留空。"
+          }
+        }
+      }
+    },
+    "The board couldn't sign in. Check the Wi-Fi password." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板登录失败，请检查 Wi-Fi 密码。"
+          }
+        }
+      }
+    },
+    "The board can't find this network. Check the name; the board only sees 2.4 GHz Wi-Fi." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板找不到这个网络。请检查名称；小板只能看到 2.4 GHz 的 Wi-Fi。"
+          }
+        }
+      }
+    },
+    "The board couldn't join this network. Check the name and password, then try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板无法加入这个网络。请检查名称和密码后重试。"
+          }
+        }
+      }
+    },
+    "Wi-Fi Name" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wi-Fi 名称"
+          }
+        }
+      }
+    },
+    "Hide Password" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏密码"
+          }
+        }
+      }
+    },
+    "Show Password" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示密码"
+          }
+        }
+      }
+    },
+    "IP Address" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP 地址"
+          }
+        }
+      }
+    },
+    "Connect the Board" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接小板"
+          }
+        }
+      }
+    },
+    "The name and password go to the board over Bluetooth. Use 2.4 GHz Wi-Fi, and keep this iPhone on the same network." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名称和密码通过蓝牙发送给小板。请使用 2.4 GHz 的 Wi-Fi，并让这台 iPhone 连接同一个网络。"
+          }
+        }
+      }
+    },
+    "Screen Mirroring goes to the board over your Wi-Fi." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕镜像通过你的 Wi-Fi 传到小板。"
+          }
+        }
+      }
+    },
+    "Connect the board to Wi-Fi" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把小板连上 Wi-Fi"
+          }
+        }
+      }
+    },
+    "Joining can take up to 30 seconds — hang tight." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接最多需要 30 秒，请稍候。"
+          }
+        }
+      }
+    },
+    "Enter the Wi-Fi this iPhone is on. The name and password go to the board over Bluetooth." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填写这台 iPhone 正在使用的 Wi-Fi。名称和密码通过蓝牙发送给小板。"
+          }
+        }
+      }
+    },
+    "The board only sees 2.4 GHz Wi-Fi." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板只能看到 2.4 GHz 的 Wi-Fi。"
+          }
+        }
+      }
+    },
+    "Guest and office networks may keep devices apart; then mirroring can't find the board." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "访客网络和办公网络可能隔离设备，这时屏幕镜像会找不到小板。"
+          }
+        }
+      }
+    },
+    "Not in the list? Keep this iPhone on the same Wi-Fi as the board." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列表里没有？请让这台 iPhone 和小板连接同一个 Wi-Fi。"
+          }
+        }
+      }
+    },
+    "the board did not rejoin the Wi-Fi in 5 minutes" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板 5 分钟内没有重新连上 Wi-Fi"
+          }
+        }
+      }
+    },
+    "Waiting for the board to rejoin the Wi-Fi…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待小板重新连上 Wi-Fi…"
+          }
+        }
+      }
+    },
+    "Check Wi-Fi" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查 Wi-Fi"
+          }
+        }
+      }
+    },
+    "Check the board's Wi-Fi to continue" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请检查小板的 Wi-Fi 以继续"
+          }
+        }
+      }
+    },
+    "The board can't reach the Wi-Fi. Check the network or Settings › Board; the run goes on when it is back." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板连不上 Wi-Fi。请检查网络或“设置 › 小板”；恢复后任务会继续。"
+          }
+        }
+      }
+    },
+    "The board lost its Wi-Fi" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板断开了 Wi-Fi"
+          }
+        }
+      }
+    },
+    "The update goes over Wi-Fi. Connect the board to Wi-Fi in Settings › Board first." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新通过 Wi-Fi 进行。请先在“设置 › 小板”中把小板连上 Wi-Fi。"
+          }
+        }
+      }
+    },
+    "The board is on Wi-Fi" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小板已连上 Wi-Fi"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

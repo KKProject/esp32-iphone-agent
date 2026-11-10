@@ -151,11 +151,15 @@ struct BoardSettingsView: View {
                 }
                 .padding(.vertical, Space.xs)
                 if board.connected, let s = board.status {
+                    ValueRow(title: "连接方式", value: board.usingNetwork ? "Wi-Fi" : "蓝牙配置")
                     ValueRow(title: "Mouse", value: s.usb ?? "–")
                     ValueRow(title: "Mirroring", value: s.ap ?? "–")
                 }
             }
-            if board.pairedID == nil || !board.connected {
+            if !board.lastError.isEmpty {
+                Section { Text(verbatim: board.lastError).font(.footnote).foregroundStyle(Palette.warning) }
+            }
+            if !board.networkConfigured && (board.pairedID == nil || !board.connected) {
                 Section {
                     ForEach(board.found.filter { $0.id != board.pairedID }) { f in
                         Button { Haptics.tick(); board.pair(f.id) } label: {
@@ -174,40 +178,25 @@ struct BoardSettingsView: View {
                     Text("Nearby")
                 }
             }
-            Section {
-                Button { app.startJoin() } label: {
-                    HStack {
-                        Text("Join the Board's Wi-Fi")
-                        Spacer()
-                        if app.join.busy { ProgressView() }
-                    }
-                }
-                .disabled(app.join.busy)
-                if let ssid = app.hotspotSSID { ValueRow(title: "Network", value: ssid) }
-                if let net = app.manualHotspot, let pass = net.pass {
-                    if let ssid = net.ssid { ValueRow(title: "Network", value: ssid) }
-                    ValueRow(title: "Password", value: pass)
-                    Button { UIPasteboard.general.string = pass; Haptics.success() } label: { Text("Copy Wi-Fi Password") }
-                    Button { UIPasteboard.general.string = pass; Hotspot.openWiFiSettings() } label: { Text("Open Settings") }
-                }
-            } header: {
-                Text("Wi-Fi")
-            } footer: {
-                Text("Turn off Personal Hotspot before joining. While joined, the internet goes over cellular data. Switch back in Settings › Wi-Fi when you are done.")
-            }
+            BoardWiFiSection(app: app, board: board)
             FirmwareSection(app: app, updater: app.firmware, board: board)
             if board.pairedID != nil {
                 Section {
-                    Button("Unpair Board", role: .destructive) { Task { await board.unpair() } }
+                    if !board.networkConfigured {
+                        Button("Unpair Board", role: .destructive) { Task { await board.unpair() } }
+                    }
                     Button("Forget in This App", role: .destructive) { board.forget() }
                 } footer: {
-                    Text("Unpair erases the bonds on the board. iOS keeps its own: also tap (i) next to \"ESP32 Agent\" in Settings › Bluetooth and choose Forget This Device.")
+                    if board.networkConfigured {
+                        Text("建议先使用“重新配置 Wi-Fi”恢复蓝牙。直接忘记后，需要通过 USB 发送 0 setup 才能重新配置。")
+                    } else {
+                        Text("Unpair erases the bonds on the board. iOS keeps its own: also tap (i) next to \"ESP32 Agent\" in Settings › Bluetooth and choose Forget This Device.")
+                    }
                 }
             }
         }
         .navigationTitle("Board")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await app.refreshHotspot() }
     }
 }
 

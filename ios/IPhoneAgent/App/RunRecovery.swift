@@ -1,6 +1,6 @@
 import Foundation
 
-/// Self-healing runs: a lost board, hotspot or mirroring pauses the run (AgentLoop.waitForScreen); this side
+/// Self-healing runs: a lost board, Wi-Fi or mirroring pauses the run (AgentLoop.waitForScreen); this side
 /// reports each stage (log, Live Activity, in-app banner, a notification when the user has to act) and
 /// restores the board's state once the screen is live again.
 extension AppModel {
@@ -78,7 +78,7 @@ extension AppModel {
     private func kind(_ part: Recovery.Part) -> Notifier.Kind {
         switch part {
         case .board: return .board
-        case .hotspot: return .wifi
+        case .network: return .wifi
         case .mirroring, .frames: return .mirroring
         }
     }
@@ -86,7 +86,7 @@ extension AppModel {
     private func title(_ part: Recovery.Part) -> String {
         switch part {
         case .board: return String(localized: "Board disconnected")
-        case .hotspot: return String(localized: "iPhone left the board's Wi-Fi")
+        case .network: return String(localized: "The board lost its Wi-Fi")
         case .mirroring: return String(localized: "Start Screen Mirroring to continue")
         case .frames: return String(localized: "Waiting for a screen image")
         }

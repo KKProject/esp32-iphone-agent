@@ -1,7 +1,7 @@
 import Foundation
 
-/// The Wi-Fi video channel (docs/ble-protocol.md, "Wi-Fi video"): UDP to the board's port 7200 over its
-/// hotspot. Several Mbps instead of BLE's ~140 kbps, so the screen keeps up with animations. BLE stays the
+/// The Wi-Fi video channel (docs/ble-protocol.md, "Wi-Fi video"): UDP to the board's port 7200 over the
+/// Wi-Fi. Several Mbps instead of BLE's ~140 kbps, so the screen keeps up with animations. BLE stays the
 /// command link, keeps the app alive in the background, and carries the video whenever this is down.
 /// UDP transport with nack/resync (firmware built with WV_TCP 0). Not used for now: see VideoTransport.
 @MainActor final class VideoSocket: WifiVideoLink {
@@ -47,7 +47,7 @@ import Foundation
         }
     }
 
-    /// Say hello again now (back in the foreground, hotspot rejoined): the board may have dropped us.
+    /// Say hello again now (back in the foreground, Wi-Fi back): the board may have dropped us.
     func kick() {
         guard target != nil else { return }
         if fd < 0 { reopen() } else { send("hello \(target!.token)") }
@@ -63,7 +63,7 @@ import Foundation
         setActive(false)
     }
 
-    /// A plain BSD UDP socket, connected to the board: the kernel routes 192.168.4.x to the hotspot. (An
+    /// A plain BSD UDP socket, connected to the board: the kernel picks the route to the board. (An
     /// NWConnection required to use Wi-Fi stayed "unsatisfied, no interfaces" while the phone was on the
     /// hotspot with cellular as its internet, 2026-10-19.)
     private func open() {
@@ -116,7 +116,7 @@ import Foundation
     }
 
     /// A socket error, logged when it changes (ENETDOWN with the Local Network permission off, EHOSTUNREACH
-    /// off the hotspot).
+    /// off the Wi-Fi).
     private func note(_ what: String, _ code: Int32) {
         let text = "video: wifi \(what) failed: \(String(cString: strerror(code))) (errno \(code))"
         guard text != lastError else { return }
@@ -155,7 +155,7 @@ import Foundation
         }
         guard let token = target?.token else { return }
         // The board answers every keep-alive and drops a session it hasn't heard from in 3 s: silence that long
-        // means it sends video over BLE again (iOS suspended us, the hotspot is gone).
+        // means it sends video over BLE again (iOS suspended us, the Wi-Fi is gone).
         if acked && t - lastDatagram > 3 {
             acked = false
             helloSince = t

@@ -1,18 +1,18 @@
 import Foundation
 
-/// Self-healing after a lost link: which part is missing (board, hotspot, mirroring, fresh image), when to ask the user,
+/// Self-healing after a lost link: which part is missing (board, Wi-Fi, mirroring, fresh image), when to ask the user,
 /// and when to give up. Pure: the caller polls it with the link state and the time.
 struct Recovery {
     /// What the app sees of the link right now.
     struct Link: Equatable {
         var connected: Bool       // BLE link to the board is up
-        var sta: Int?             // phones joined to the board's hotspot (nil = unknown)
+        var sta: Int?             // 1 while the board is on the Wi-Fi (nil = unknown)
         var ap: String?           // idle | connected | streaming
         var frameAt: Double       // when the newest decoded frame arrived
         var stalled = false       // the board itself gets no frames from AirPlay: ask the user at once
     }
 
-    enum Part: Equatable { case board, hotspot, mirroring, frames }
+    enum Part: Equatable { case board, network, mirroring, frames }
 
     struct Stage: Equatable {
         var part: Part
@@ -26,7 +26,7 @@ struct Recovery {
     }
 
     /// How long each part may come back by itself before the user is asked; then the whole limit.
-    static let quiet: [Part: Double] = [.board: 30, .hotspot: 30, .mirroring: 20, .frames: 20]
+    static let quiet: [Part: Double] = [.board: 30, .network: 30, .mirroring: 20, .frames: 20]
     static let limit = 300.0
 
     let started: Double
@@ -39,7 +39,7 @@ struct Recovery {
     /// Live once the board is back, mirroring streams and a frame newer than the loss has been decoded.
     mutating func next(_ l: Link, at t: Double) -> Next {
         let part: Part? = !l.connected ? .board
-            : l.sta == 0 ? .hotspot
+            : l.sta == 0 ? .network
             : l.ap != "streaming" ? .mirroring
             : l.frameAt <= started ? .frames
             : nil
@@ -53,7 +53,7 @@ struct Recovery {
     static func reason(_ part: Part) -> String {
         switch part {
         case .board: return String(localized: "the board did not come back in 5 minutes")
-        case .hotspot: return String(localized: "the iPhone did not rejoin the board's Wi-Fi in 5 minutes")
+        case .network: return String(localized: "the board did not rejoin the Wi-Fi in 5 minutes")
         case .mirroring: return String(localized: "Screen Mirroring did not come back in 5 minutes")
         case .frames: return String(localized: "no fresh screen image arrived in 5 minutes")
         }
@@ -66,9 +66,9 @@ extension Recovery.Stage {
         switch (part, ask) {
         case (.board, false): return "BLE link lost; reconnecting"
         case (.board, true): return "board still gone; asked the user to check it"
-        case (.hotspot, false): return "board up, iPhone not on its hotspot (sta 0); waiting for iOS to rejoin"
-        case (.hotspot, true): return "iPhone still off the hotspot; asked the user to join it"
-        case (.mirroring, false): return "board and hotspot up, no mirroring session; waiting for iOS to resume mirroring"
+        case (.network, false): return "board up, not on the Wi-Fi (sta 0); waiting for it to rejoin"
+        case (.network, true): return "board still off the Wi-Fi; asked the user to check it"
+        case (.mirroring, false): return "board and Wi-Fi up, no mirroring session; waiting for iOS to resume mirroring"
         case (.mirroring, true): return "mirroring still off; asked the user to start it"
         case (.frames, false): return "mirroring session active, no fresh decoded image; waiting for a frame"
         case (.frames, true): return "mirroring session active, still no fresh decoded image; asked the user to reconnect mirroring"
@@ -80,11 +80,11 @@ extension Recovery.Stage {
         switch (part, ask) {
         case (.board, _):
             return .waitingForBoard
-        case (.hotspot, false):
-            return IslandStatus(short: String(localized: "Joining Wi-Fi…"), full: String(localized: "Rejoining the board's Wi-Fi…"),
+        case (.network, false):
+            return IslandStatus(short: String(localized: "Joining Wi-Fi…"), full: String(localized: "Waiting for the board to rejoin the Wi-Fi…"),
                                 look: nil, minimal: String(localized: "Wi-Fi"))
-        case (.hotspot, true):
-            return IslandStatus(short: String(localized: "Join Wi-Fi"), full: String(localized: "Join the board's Wi-Fi to continue"),
+        case (.network, true):
+            return IslandStatus(short: String(localized: "Check Wi-Fi"), full: String(localized: "Check the board's Wi-Fi to continue"),
                                 look: nil, minimal: String(localized: "Wi-Fi"))
         case (.mirroring, false):
             return IslandStatus(short: String(localized: "Mirroring…"), full: String(localized: "Waiting for mirroring…"),
@@ -108,8 +108,8 @@ extension Recovery.Stage {
     var line: String {
         switch (part, ask) {
         case (.board, _): return IslandStatus.waitingForBoard.full
-        case (.hotspot, false): return String(localized: "The board restarted. Waiting for the iPhone to rejoin its Wi-Fi…")
-        case (.hotspot, true): return String(localized: "Join the board's Wi-Fi in Settings › Wi-Fi; the run goes on when it is back.")
+        case (.network, false): return String(localized: "Waiting for the board to rejoin the Wi-Fi…")
+        case (.network, true): return String(localized: "The board can't reach the Wi-Fi. Check the network or Settings › Board; the run goes on when it is back.")
         case (.mirroring, false): return String(localized: "Board is back. Waiting for Screen Mirroring to resume…")
         case (.mirroring, true): return String(localized: "Open Control Center, tap Screen Mirroring → ESP32 Agent; the run goes on from here.")
         case (.frames, false): return status.full

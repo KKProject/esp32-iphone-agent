@@ -23,7 +23,7 @@ import XCTest
         XCTAssertEqual(end?.end, true)
         XCTAssertEqual(end?.frame, Data())
         XCTAssertTrue(AudioRecord.isAudio(record(seq: 1, flags: 0, frame: Data([1]))))
-        let video = Data([5, 0, 0x01 | 0x04, 0xaa])  // START | IDR
+        let video = Data([5, 0, UInt8(0x01 | 0x04), 0xaa])  // START | IDR
         XCTAssertFalse(AudioRecord.isAudio(video))
         XCTAssertNil(AudioRecord(video))
         XCTAssertNil(AudioRecord(Data([1, 0, 0x80, 1, 2])))  // truncated header

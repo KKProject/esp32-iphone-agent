@@ -15,6 +15,7 @@
 #include "nimble/nimble/host/include/host/ble_hs.h"
 #include "netcfg.h"
 #include "cli_link.h"
+#include "app_tcp.h"
 #include "src/cli/cli_proto.h"
 #include "logbuf.h"
 
@@ -55,6 +56,7 @@ struct Text {
   char s[TEXT_MAX];
 };
 
+static bool radioEnabled;  // false on network-only boots: NimBLE is never initialized
 static NimBLEServer *server;
 static NimBLECharacteristic *chars[CH_COUNT], *netChar, *cliIn, *cliInNR;
 static QueueHandle_t cmdQueue, replyQueue;
@@ -288,6 +290,7 @@ static void sendText(int ch, const Text &t, uint32_t timeout_ms) {
 // A plain link that is neither the app (it encrypts within a second) nor a CLI session: a stranger holding a slot.
 // Not within the pairing window: the app's first link stays plain while iOS shows its pairing dialog.
 static void dropIdlePlainLinks() {
+  if (!radioEnabled) return;
   if (ble_pair_window_open()) return;
   for (int i = 0; i < MAX_PEERS; i++) {
     int h = peers[i];
@@ -304,6 +307,7 @@ static void txTask(void *) {
   for (;;) {
     if (xQueueReceive(replyQueue, &t, pdMS_TO_TICKS(20)) == pdTRUE) {
       if (t.dest == FROM_CLI) cli_send_ctrl('r', t.s, t.len, REPLY_TIMEOUT_MS);
+      else if (app_tcp_connected()) app_tcp_send('r',String(t.s,t.len));
       else sendText(CH_REPLY, t, REPLY_TIMEOUT_MS);
       ctrlPending--;
     }
@@ -357,6 +361,7 @@ static AdvId wantedAdv() {
 
 // Brings advertising to the identity wanted now; a connection ends it, so this also restarts it.
 static void advertise() {
+  if (!radioEnabled) return;
   xSemaphoreTake(advLock, portMAX_DELAY);
   AdvId want = wantedAdv();
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
@@ -398,6 +403,13 @@ void ble_begin(const String &name) {
   cmdQueue = psramQueue(6, CMD_MAX);
   replyQueue = psramQueue(8, sizeof(Text));
   statusLock = xSemaphoreCreateMutex();
+  if (net_only()) {
+    // TCP replies/status still use the shared queues and TX worker.
+    xTaskCreatePinnedToCore(txTask, "net_tx", 3072, NULL, 3, NULL, 1);
+    board_log("ble: disabled (network-only mode)");
+    return;
+  }
+  radioEnabled = true;
   NimBLEDevice::init(name.c_str());
   NimBLEDevice::setMTU(517);
   NimBLEDevice::setPower(9);  // dBm: retain link margin during setup, including a board powered by a Mac.
@@ -474,7 +486,7 @@ bool ble_pop_cmd(String &line, char &origin, uint32_t wait_ms) {
 }
 
 void ble_reply(const String &line, char dest) {
-  if (dest == FROM_CLI ? cli_slot() < 0 : !anySubscribed(CH_REPLY)) return;
+  if (dest == FROM_CLI ? cli_slot() < 0 : !app_tcp_connected() && !anySubscribed(CH_REPLY)) return;
   Text t;
   t.dest = dest;
   toText(t, line);
@@ -497,6 +509,7 @@ void ble_cli_status(const String &full, const String &compact) {
 }
 
 void ble_status(const String &json) {
+  if (!radioEnabled) return;
   chars[CH_STATUS]->setValue((const uint8_t *)json.c_str(), json.length());  // also served on read
   if (!anySubscribed(CH_STATUS)) return;
   xSemaphoreTake(statusLock, portMAX_DELAY);
@@ -546,6 +559,7 @@ uint8_t ble_phy() {
 }
 
 void ble_unpair() {
+  if (!radioEnabled) return;
   for (int i = 0; i < 100 && ctrlPending > 0; i++) vTaskDelay(pdMS_TO_TICKS(10));  // let the `ok` go out
   NimBLEDevice::deleteAllBonds();  // unpairs each bond (also drops it from the controller's resolving list)
   ble_store_clear();               // and any CCCD/peer records left in NVS

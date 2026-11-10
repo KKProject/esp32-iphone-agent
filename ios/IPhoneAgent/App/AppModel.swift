@@ -40,7 +40,6 @@ import UIKit
     @Published var modelFirstTokenSeconds: Double?
     @Published var modelResponseSeconds: Double?
     @Published var modelOK: Bool?  // last LLM ping result
-    @Published var hotspotSSID: String?
     @Published var otherWiFi: String?  // the phone is on this network, not the board's
     /// The character's mood during and right after a run; nil = resting (idle or sleeping, see `mood`).
     @Published var runMood: Mood?
@@ -53,7 +52,7 @@ import UIKit
     @Published var review: ReviewDraft?
     /// Paused for the user: why (nil = not paused), and whether they are doing it by hand right now.
     @Published var help: String?
-    @Published var recovering: Recovery.Stage?  // the run is paused for a lost link (board, hotspot, mirroring)
+    @Published var recovering: Recovery.Stage?  // the run is paused for a lost link (board, Wi-Fi, mirroring)
     var recoverySince = Date()
     @Published var takingOver = false
     @Published var paused = false  // Pause on the Dynamic Island: the run holds before its next look
@@ -190,7 +189,7 @@ import UIKit
             readBoardPace()
             if agent.running && !MockMode.on && FrameMode.current == .stream {  // the board forgot `stream on`: the paused run needs the screen back
                 Task { [weak self] in
-                    do { try await self?.feed.stream(true); DebugLog.write("recover: BLE back, stream on again") } catch {
+                    do { try await self?.feed.stream(true); DebugLog.write("recover: board link back, stream on again") } catch {
                         DebugLog.write("recover: stream on after reconnect failed: \(error.localizedDescription)")
                     }
                 }
@@ -199,7 +198,7 @@ import UIKit
         }
         board.onLinkDown = { [weak self] in
             self?.pointer.boardPace = nil
-            self?.wifiVideo.stop()  // the board stops streaming without BLE
+            self?.wifiVideo.stop()  // reconnect refreshes the per-boot video token
             self?.feed.linkLost()
             self?.startupBoardUnavailable(disconnected: true)
             self?.beginLinkRecoveryDisplay()
@@ -241,7 +240,7 @@ import UIKit
             }
         }
         center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.metrics.enteredForeground(); DebugLog.write("app: foreground"); self?.wifiVideo.kick(); self?.prewarmStream() }
+            MainActor.assumeIsolated { self?.metrics.enteredForeground(); DebugLog.write("app: foreground"); self?.board.resumeNetwork(); self?.wifiVideo.kick(); self?.prewarmStream() }
         }
         if MockMode.on { startMock() }
         runs.reload()
@@ -253,7 +252,9 @@ import UIKit
     private func updateWifiVideo() {
         // Read at connect while the board was still joining Wi-Fi after power-on, the address stays empty and the
         // video goes over BLE only (2026-11-06): read it again every 5 s until there is one.
-        if [nil, "", "0.0.0.0"].contains(board.net?.ip), now() - lastNetRead > 5 {
+        // The same when the router gave the board another address.
+        let seen = board.status?.ip
+        if [nil, "", "0.0.0.0"].contains(board.net?.ip) || (seen != nil && seen != board.net?.ip), now() - lastNetRead > 5 {
             lastNetRead = now()
             Task { _ = try? await board.readNet(fresh: true) }
         }
@@ -344,13 +345,10 @@ import UIKit
         let line = "board status: ap \(s.ap ?? "-") usb \(s.usb ?? "-") sta \(s.sta.map(String.init) ?? "-")"
             + " screen \(s.w.map(String.init) ?? "-")x\(s.h.map(String.init) ?? "-") rst \(s.rst ?? "-")"
         guard line != lastStatus else { return }
-        let wasOnBoardWiFi = lastStatus.contains(" sta ") && !lastStatus.contains(" sta 0") && !lastStatus.contains(" sta -")
         lastStatus = line
         DebugLog.write(line)
         if let up = s.up, up < 30_000 {  // a link drop that is really the board rebooting (crash, brownout, ...)
             DebugLog.write("board: booted \(up / 1000) s ago (reset: \(s.rst ?? "?"), heap \((s.heap ?? 0) / 1024) KB)")
-            // On another Wi-Fi with the board (station mode, harness/board.py net sta) there is no hotspot to rejoin.
-            if (wasOnBoardWiFi || hotspotSSID != nil) && board.net?.mode != "sta" { rejoinAfterReboot() }
         }
     }
 
@@ -370,12 +368,9 @@ import UIKit
 
     // MARK: - setup and diagnostics
 
-    /// The one-tap join of the board's Wi-Fi (state machine in HotspotJoin.swift).
-    @Published var join = JoinState.idle
-    var joinTask: Task<Void, Never>?
-
-    /// Set when one-tap join failed: the user joins in Settings with the shown password.
-    @Published var manualHotspot: NetConfig?
+    /// Putting the board on the Wi-Fi (state machine in BoardWiFi.swift).
+    @Published var boardWiFi = BoardWiFiState.idle
+    var boardWiFiTask: Task<Void, Never>?
 
     func bench(kb: Int = 256) async {
         do {

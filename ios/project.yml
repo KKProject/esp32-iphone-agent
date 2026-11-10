@@ -47,8 +47,8 @@ targets:
             CFBundleURLSchemes: [iphoneagent]
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        NSBluetoothAlwaysUsageDescription: ESP32 Agent talks to its USB board over Bluetooth to see the screen and move the pointer.
-        NSLocalNetworkUsageDescription: ESP32 Agent receives the screen from its board over the board's Wi-Fi, and connects to a model server you configure on your local network.
+        NSBluetoothAlwaysUsageDescription: ESP32 Agent uses Bluetooth to pair with and configure its board. After setup, status and controls use your local Wi-Fi network.
+        NSLocalNetworkUsageDescription: ESP32 Agent connects to its board over Wi-Fi for status, controls and screen mirroring, and to a model server you configure on your local network.
         NSSpeechRecognitionUsageDescription: With Listen to phone audio on, ESP32 Agent turns the sound your iPhone plays while mirroring into text, on this iPhone, so the agent can follow videos and calls.
         NSBonjourServices: [_esp32agent._tcp, _handsy-harness._tcp]
         NSAppTransportSecurity:
@@ -90,7 +90,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         LOCALIZATION_PREFERS_STRING_CATALOGS: YES
-        # Hotspot entitlement needs an Apple ID in Xcode; opt in via Local.xcconfig.
+        # The entitlements need an Apple ID in Xcode; opt in via Local.xcconfig.
         CODE_SIGN_ENTITLEMENTS: $(IA_ENTITLEMENTS)
   AgentActivity:
     type: app-extension

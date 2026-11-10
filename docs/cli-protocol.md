@@ -100,7 +100,9 @@ What the iPhone plays while it mirrors (AirPlay audio), two ways; the CLI's `lis
 
 ## Wi-Fi link
 When this computer can reach the board's IP (both on the same Wi-Fi, or the computer joined the board's hotspot),
-the session moves there and BLE stays connected as the way back.
+the session moves there. This local variant uses BLE for provisioning only. After authenticated TCP
+commands succeed, `netonly on` persists network-only mode and restarts the board once. Subsequent boots
+never initialize NimBLE; the CLI saves the endpoint and reconnects directly over TCP without scanning BLE.
 - **TCP port 7202**, one computer at a time. Records `[u16 LE length][frame]` carry the frames above, unchanged.
   A zero-length record is a keepalive: the CLI sends one every 2 s, and the board drops a link quiet for 6 s.
   The board sends status every second, so the CLI drops a link quiet for 5 s.
@@ -109,12 +111,18 @@ the session moves there and BLE stays connected as the way back.
 - **Moving.** The CLI learns the IP from the status (`net` `ap`/`sta`, `ip`), opens a session on TCP, and sends
   `stream on` on it. A session's first DATA frame on a new link takes over from the same client's session on the
   other link: the old one stops (no replies, status or video), its link stays up. Video starts over from the GOP's
-  IDR. Another client's session can't take over. When the TCP link drops, the CLI opens a new session on its BLE
-  link; after a failed try it waits 10 s, doubling up to a minute.
+  IDR. Another client's session can't take over. Once the board acknowledges `netonly on`, the CLI releases BLE.
+  When TCP drops, the next request reconnects to the saved address, with no BLE fallback.
 - **`net`** (CLI only): `ok {"mode","ssid","pass","ip"}`, the board's Wi-Fi. `net {"mode":"ap"}` or
   `net {"mode":"sta","ssid":…,"pass":…}` changes it, as the app's `net` write does (the iPhone has to mirror over
   the same network). The CLI's status has `link`: `{"via":"ble"|"wifi","mtu":…,"kbps":…}` for its own link.
-- `ESP32AGENT_TRANSPORT=ble` (or `esp32agent net via ble`) keeps the session on BLE.
+- `ESP32AGENT_TRANSPORT=ble` (or `esp32agent net via ble`) is available only before network-only setup.
+- `netonly on|off`: requires an authenticated CLI session over Wi-Fi. Persists the mode in NVS, replies first,
+  then restarts after 1.5 s; repeating the current setting does not restart. `net_json` includes `network_only`.
+- `esp32agent net address IP [--device ID]` updates the saved endpoint locally, without scanning BLE.
+- `esp32agent net setup` clears the saved network-only preference and asks a reachable board for `netonly off`.
+  If unreachable, send `0 setup` over USB serial (115200 baud); it clears the board preference and restarts.
+  Pairing keys and Wi-Fi credentials are retained. Network loss alone never enables BLE.
 
 ## Sharing the phone with the app
 One side drives the phone at a time, and the app wins (`hardware/hid_bridge/src/hid/arbiter.h`). The app runs

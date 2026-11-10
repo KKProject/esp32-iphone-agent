@@ -161,6 +161,60 @@ func (s *Server) handle(nc net.Conn) {
 
 // Do runs one request.
 func (s *Server) Do(ctx context.Context, req Request) Response {
+	if req.Cmd == "net" && req.Text == "setup" {
+		boards := s.Config.NetworkBoards(req.Device)
+		if len(boards) != 1 {
+			return fail(errors.New("select one network-only board with --device <id>"))
+		}
+		for id := range boards {
+			// Re-enable provisioning remotely when possible; USB remains the recovery path if unreachable.
+			c, err := s.conn(ctx, id)
+			restored := false
+			if err == nil {
+				// Serialize recovery with a handoff that may still be committing its saved mode.
+				c.wifi.finishMu.Lock()
+				defer c.wifi.finishMu.Unlock()
+				rctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+				_, err = c.Send(rctx, "netonly off")
+				cancel()
+				restored = err == nil
+			}
+			if err := s.Config.ClearNetwork(id); err != nil {
+				return fail(err)
+			}
+			s.mu.Lock()
+			old := s.conns[id]
+			delete(s.conns, id)
+			s.mu.Unlock()
+			if old != nil {
+				old.close()
+			}
+			message := "BLE setup restored; wait for the board to restart, then run net join"
+			if !restored {
+				message = "local BLE setup restored; connect the board by USB and send 0 setup at 115200 baud, then run net join"
+			}
+			return ok(map[string]any{"id": id, "board_restored": restored, "message": message})
+		}
+	}
+
+	if req.Cmd == "net" && strings.HasPrefix(req.Text, "address ") {
+		address := strings.TrimSpace(strings.TrimPrefix(req.Text, "address "))
+		ip := net.ParseIP(address)
+		if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
+			return fail(errors.New("usage: net address <board IP>"))
+		}
+		boards := s.Config.NetworkBoards(req.Device)
+		if len(boards) != 1 {
+			return fail(errors.New("select one configured board with --device <id>"))
+		}
+		for id := range boards {
+			if err := s.Config.SetNetwork(id, address); err != nil {
+				return fail(err)
+			}
+		}
+		return ok(map[string]string{"address": address})
+	}
+
 	switch req.Cmd {
 	case "version":
 		return ok(map[string]string{"version": s.Version})
@@ -231,6 +285,15 @@ func (s *Server) devices(ctx context.Context) Response {
 		}
 	}
 	s.mu.Unlock()
+	for id, b := range s.Config.NetworkBoards("") {
+		if !seen[id[8:]] {
+			list = append(list, deviceInfo{id, b.Name, "ios", "esp32agent", "offline", true, false})
+			seen[id[8:]] = true
+		}
+	}
+	if s.Config.AllNetworkOnly() {
+		return ok(map[string]any{"devices": list})
+	}
 	found, err := s.scan(ctx)
 	if err != nil {
 		return fail(err)
@@ -338,6 +401,24 @@ func (s *Server) conn(ctx context.Context, sel string) (*Conn, error) {
 	if s.appBusy() {
 		return nil, ErrAppBusy
 	}
+	// Configured boards reconnect directly over TCP, even after a daemon or board restart.
+	boards := s.Config.NetworkBoards(sel)
+	if len(boards) > 1 {
+		return nil, errors.New("several network boards configured: pass --device <id>")
+	}
+	for id, b := range boards {
+		dial := s.DialWiFi
+		if dial == nil {
+			dial = ble.DialWiFi
+		}
+		dctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		l, err := dial(dctx, b.Address)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("network-only board %s at %s is unreachable: %w; if its IP changed, use net address <IP> --device %s; restore BLE setup over USB with 0 setup", id, b.Address, err, id)
+		}
+		return s.openTransport(ctx, ble.Found{Name: b.Name}, id, l, "wifi", b.Address)
+	}
 	f, err := s.pick(ctx, sel, true)
 	if err != nil {
 		return nil, err
@@ -347,6 +428,10 @@ func (s *Server) conn(ctx context.Context, sel string) (*Conn, error) {
 
 // open connects to f and starts a session. l: an already open link (after PAIR).
 func (s *Server) open(ctx context.Context, f ble.Found, sel string, l proto.Link) (*Conn, error) {
+	return s.openTransport(ctx, f, sel, l, "ble", "")
+}
+
+func (s *Server) openTransport(ctx context.Context, f ble.Found, sel string, l proto.Link, via, address string) (*Conn, error) {
 	s.linkMu.Lock()
 	defer s.linkMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -386,6 +471,7 @@ func (s *Server) open(ctx context.Context, f ble.Found, sel string, l proto.Link
 		c.wifi = newWifiLink(dial, func(ctx context.Context, l proto.Link) (*proto.Session, error) {
 			return proto.Hello(ctx, l, s.Config.ClientIDBytes(), s.Config.Key)
 		})
+		c.wifi.save = func(ip string) error { return s.Config.SetNetwork(id, ip) }
 		if s.WiFiCheck > 0 {
 			c.wifi.every = s.WiFiCheck
 		}
@@ -393,12 +479,20 @@ func (s *Server) open(ctx context.Context, f ble.Found, sel string, l proto.Link
 		s.conns[id] = c
 	}
 	s.mu.Unlock()
-	c.attach(sess, "ble", l)
+	c.attach(sess, via, l)
 	if err := c.start(); err != nil {
 		c.detach(sess, err)
 		return nil, fmt.Errorf("board %s did not answer: %w", id, err)
 	}
-	log.Printf("%s: connected (%s)", id, f.Name)
+	if via == "wifi" {
+		c.wifi.mu.Lock()
+		c.wifi.address = address
+		c.wifi.mu.Unlock()
+		if err := c.wifi.finish(c, address); err != nil {
+			c.wifi.failed(err.Error())
+		}
+	}
+	log.Printf("%s: connected (%s) via %s", id, f.Name, via)
 	return c, nil
 }
 

@@ -30,8 +30,10 @@ func Dir() (string, error) {
 
 // Board is one paired board.
 type Board struct {
-	Key  string `json:"key"` // K, hex
-	Name string `json:"name,omitempty"`
+	Address     string `json:"address,omitempty"` // authenticated network-only endpoint
+	NetworkOnly bool   `json:"network_only,omitempty"`
+	Key         string `json:"key"` // K, hex
+	Name        string `json:"name,omitempty"`
 }
 
 // Listen is `esp32agent listen`: hearing what the phone plays while it mirrors (docs/cli-protocol.md, "Phone audio").
@@ -165,4 +167,58 @@ func (c *Config) Match(sel string) []string {
 // CalibrationPath is where a board's pointer calibration lives.
 func CalibrationPath(dir, boardID string) string {
 	return filepath.Join(dir, "calibration-"+boardID+".json")
+}
+
+// NetworkBoards returns a snapshot without exposing keys to network discovery.
+func (c *Config) NetworkBoards(sel string) map[string]Board {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := map[string]Board{}
+	for id, b := range c.Boards {
+		if b.NetworkOnly && (sel == "" || strings.EqualFold(id, sel) || len(sel) == 4 && strings.EqualFold(id[8:], sel)) {
+			out[id] = Board{Name: b.Name, Address: b.Address, NetworkOnly: true}
+		}
+	}
+	return out
+}
+
+func (c *Config) SetNetwork(id, address string) error {
+	c.mu.Lock()
+	b, ok := c.Boards[id]
+	if !ok {
+		c.mu.Unlock()
+		return errors.New("board is not paired")
+	}
+	b.Address, b.NetworkOnly = address, true
+	c.Boards[id] = b
+	c.mu.Unlock()
+	return c.Save()
+}
+
+// ClearNetwork returns the selected board to BLE provisioning, preserving its pairing key.
+func (c *Config) ClearNetwork(id string) error {
+	c.mu.Lock()
+	b, ok := c.Boards[id]
+	if !ok {
+		c.mu.Unlock()
+		return errors.New("board is not paired")
+	}
+	b.NetworkOnly, b.Address = false, ""
+	c.Boards[id] = b
+	c.mu.Unlock()
+	return c.Save()
+}
+
+func (c *Config) AllNetworkOnly() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.Boards) == 0 {
+		return false
+	}
+	for _, b := range c.Boards {
+		if !b.NetworkOnly {
+			return false
+		}
+	}
+	return true
 }

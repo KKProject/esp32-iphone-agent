@@ -171,7 +171,7 @@ extension Gestures {
 
     /// The board or mirroring went away mid-run: pause ("waiting for the board") until the screen is live
     /// again, up to `reconnectWait` s, instead of failing the run.
-    /// The screen is gone (board, hotspot or mirroring lost): pause the run until it is back, in stages.
+    /// The screen is gone (board, Wi-Fi or mirroring lost): pause the run until it is back, in stages.
     /// Returns how many seconds it took, or nil if the screen was there all along. Never ends the run for a
     /// lost link before Recovery.limit.
     func waitForScreen(poll: Double = 0.5, forceRestore: Bool = false,

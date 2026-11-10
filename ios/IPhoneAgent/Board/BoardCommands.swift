@@ -12,7 +12,7 @@ struct DeviceError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// Where command lines go: the BLE link, or a fake board in tests.
+/// Where command lines go: BLE provisioning, encrypted TCP, or a fake board in tests.
 @MainActor protocol BoardTransport: AnyObject {
     var isConnected: Bool { get }
     func write(_ line: String) throws

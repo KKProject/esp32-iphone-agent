@@ -44,8 +44,16 @@ func (a *App) netJoin(dev string) int {
 		pass, _ = r.ReadString('\n')
 		pass = strings.TrimRight(pass, "\r\n")
 	}
-	if _, err := a.Client.Call(daemon.Request{Cmd: "net", Device: dev, Text: "join " + ssid + "\x00" + pass}); err != nil {
+	line, err := a.Client.Call(daemon.Request{Cmd: "net", Device: dev, Text: "join " + ssid + "\x00" + pass})
+	if err != nil {
 		return a.fail(err)
+	}
+	var sent daemon.Response
+	if err := json.Unmarshal(line, &sent); err != nil {
+		return a.fail(err)
+	}
+	if sent.Status != "ok" {
+		return a.print(sent)
 	}
 	fmt.Fprintf(a.Err, "Sent over Bluetooth. The board is joining %q; put the iPhone on the same Wi-Fi to mirror.\n", ssid)
 	var last []byte
@@ -57,16 +65,17 @@ func (a *App) netJoin(dev string) int {
 		last = line
 		var resp struct {
 			Data struct {
-				Via   string `json:"via"`
-				Board struct {
+				Via         string `json:"via"`
+				NetworkOnly bool   `json:"network_only"`
+				Board       struct {
 					Mode string `json:"mode"`
 					IP   string `json:"ip"`
 				} `json:"board"`
 			} `json:"data"`
 		}
 		json.Unmarshal(line, &resp)
-		if d := resp.Data; d.Via == "wifi" {
-			fmt.Fprintf(a.Err, "Done: commands and video now go over Wi-Fi (%s).\n", d.Board.IP)
+		if d := resp.Data; d.Via == "wifi" && d.NetworkOnly {
+			fmt.Fprintf(a.Err, "Done: commands and video use Wi-Fi (%s); the board restarts once with BLE disabled.\n", d.Board.IP)
 			a.waitMirroring(dev)
 			a.Out.Write(line)
 			return 0
@@ -77,7 +86,7 @@ func (a *App) netJoin(dev string) int {
 	if last != nil {
 		a.Out.Write(last)
 	}
-	return a.fail(errors.New("the link did not move to Wi-Fi in 45 s: is this computer on the same Wi-Fi, and the password right? (esp32agent net shows the board's state; commands still work over BLE)"))
+	return a.fail(errors.New("the link did not move to Wi-Fi in 45 s: is this computer on the same Wi-Fi, and the password right? (esp32agent net shows the board's state; BLE is retained only until network-only setup is acknowledged)"))
 }
 
 // waitMirroring walks the user through the step after the network: the iPhone mirroring to the board.

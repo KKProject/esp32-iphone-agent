@@ -508,6 +508,28 @@ static void test_heard(void) {
   CHECK(strlen(r.text[(r.next + HEARD_LINES - 1) % HEARD_LINES]) == HEARD_TEXT - 1);
 }
 
+// CryptoKit-generated app vectors: verifies the 16-byte tag and session derivation across platforms.
+static void test_app_proto(void) {
+  uint8_t master[32],cn[16],bn[16],c2b[16],b2c[16],mac[16],expected[128],frame[128],plain[128];
+  for(int i=0;i<32;i++)master[i]=i;
+  for(int i=0;i<16;i++){cn[i]=32+i;bn[i]=48+i;}
+  CHECK(cli_session(master,cn,bn,c2b,b2c));
+  cli_mac(master,"app-welcome-v1",cn,16,bn,16,mac);
+  hex("f12810704765c7823f4c222f4179e4bf",expected);
+  CHECK(!memcmp(mac,expected,16));
+  size_t n=app_seal(c2b,'C',1,(const uint8_t*)"c123 ping",9,frame);
+  hex("2001000000b4c696064217e89d2bc9f7422d4936d4120ced5546b029950f",expected);
+  CHECK(n==30 && !memcmp(frame,expected,n));
+  uint32_t counter=0;
+  CHECK(app_open(c2b,'C',frame,n,&counter,plain)==9 && counter==1 && !memcmp(plain,"c123 ping",9));
+  CHECK(app_open(c2b,'B',frame,n,&counter,plain)<0);
+  frame[n-1]^=1;
+  CHECK(app_open(c2b,'C',frame,n,&counter,plain)<0);
+  hex("20010000001ddac39e55d5c4012926993ac9c892601e0bc237f50aeea2518671687d",expected);
+  n=app_seal(b2c,'B',1,(const uint8_t*)"s{\"usb\":\"ok\"}",13,frame);
+  CHECK(n==34 && !memcmp(frame,expected,n));
+}
+
 int main(void) {
   test_heard();
   test_audio_packets();
@@ -520,6 +542,7 @@ int main(void) {
   test_chunker();
   test_keystream_resync();
   test_cli_proto();
+  test_app_proto();
   test_arbiter();
   test_pace();
   printf(fails ? "%d FAILED\n" : "all tests passed\n", fails);

@@ -35,12 +35,12 @@ extension AppModel {
         return away
     }
 
-    /// Leave for a run. If the board took every gesture and this iPhone still shows the app, the board's USB goes
-    /// to another device (a Mac, say): stop before the agent sends it anything more. Asking the user to swipe up
-    /// is only for a board that isn't answering.
+    /// Leave for a run. If the board took every gesture and this iPhone still shows the app, the user swipes up. An
+    /// uncalibrated pointer has never been seen on this iPhone: then the board's USB may go to another device (a Mac,
+    /// say), so stop before the agent sends it anything more.
     func leaveForRun() async throws -> Bool {
         if try await leaveApp() { return true }
-        guard startupBoardIssue || !board.connected else {
+        guard startupBoardIssue || !board.connected || pointer.calibrated else {
             DebugLog.write("leave app: the board took every gesture, the app stayed in front; not plugged into this iPhone")
             throw DeviceError(message: String(localized: "The board isn't controlling this iPhone. Plug it into this iPhone's USB-C port and try again."))
         }

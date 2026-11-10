@@ -37,10 +37,12 @@ npm：`npm install -g esp32agent`。安装脚本读取 `https://handsy.tech/cli/
 | `screencapture --format h264\|mjpeg` | 实时视频输出到 stdout，例如 `\| ffplay -` |
 | `device info` | 板子状态：`ap`（镜像中）、`fz`（画面冻结）、`busy`（App 正在使用手机）、`usb`、`ble` |
 | `calibrate` | 测量指针（第一次点按时会自动执行；需要指针可见） |
-| `net` | CLI 当前的通道（`via`：`ble` 或 `wifi`）和板子的 Wi-Fi。电脑和板子在同一个网络（同一个 Wi-Fi，或电脑连着板子热点）时，命令和画面走 Wi-Fi，蓝牙作为备用通道 |
+| `net` | CLI 当前的通道（`via`：`ble` 或 `wifi`）和板子的 Wi-Fi。电脑和板子在同一个网络（同一个 Wi-Fi，或电脑连着板子热点）时，认证成功后保存网络地址，关闭蓝牙；后续命令和画面只走 Wi-Fi |
 | `net join` | 询问 Wi-Fi 名称和密码（密码不回显），通过蓝牙会话发给板子，并等到通道切到 Wi-Fi。`net join SSID [PASSWORD]` 不询问直接设置。iPhone 也通过这个 Wi-Fi 镜像 |
 | `net hotspot` | 让板子重新打开自己的热点 |
-| `net via auto\|ble` | `ble` 让会话保持走蓝牙（也可以设 `ESP32AGENT_TRANSPORT=ble`） |
+| `net via auto\|ble` | 默认 `auto`：BLE 配网后切换为仅网络。`ble` 仅供完成配置前调试使用，已配置的板子不再回退蓝牙 |
+| `net address IP` | DHCP 地址变化时更新保存的板子 IP；多块板子用 `--device ID` 指定 |
+| `net setup` | 恢复 BLE 配网；网络不可达时同时通过 USB 串口发送 `0 setup`（115200 波特率） |
 | `listen` | 手机最近 30 秒播放的声音（视频、通话、App 语音）转成的文字；听不到时说明原因 |
 | `listen on\|off` | 投屏时收听手机声音（默认关，设置会保存） |
 | `listen mode phone\|local` | `phone`（默认）：用 ESP32 Agent App 在手机上转好的文字（在 App 里打开 设置 › 收听手机声音 和 分享给电脑）。`local`：通过 Wi-Fi 拿原始音频，在这台电脑上用 whisper.cpp 转文字 |
@@ -59,7 +61,7 @@ npm：`npm install -g esp32agent`。安装脚本读取 `https://handsy.tech/cli/
 
 附近有多块板子时，用 `--device <id>`（12 位十六进制 ID，或板子名称里的 4 位十六进制数）指定，或设置 `ESP32AGENT_DEVICE`。输出是 `{"status":"ok","data":...}` 或 `{"status":"error","error":"..."}`（退出码 1）。需要设备端 Agent 的 mobilecli 命令（`apps`、`dump ui`、`fs`、`webview` 等）会返回 `not supported on ESP32 Agent`。
 
-第一个命令会启动后台的 `esp32agent daemon`，由它保持蓝牙会话并解码视频；其他命令通过配置目录里的 unix socket 连接它（日志：同目录下的 `daemon.log`）。空闲 10 分钟后它会自动退出。
+第一个命令会启动后台的 `esp32agent daemon`，由它保持板子会话并解码视频；其他命令通过配置目录里的 unix socket 连接它（日志：同目录下的 `daemon.log`）。空闲 10 分钟后它会自动退出。
 
 ## 接入 Agent
 
@@ -100,3 +102,9 @@ ESP32AGENT_SIM=$PWD/hardware/tests/sim/cli_sim esp32agent screenshot   # 让 CLI
 ```
 
 发布：推送 tag `cli-vX.Y.Z`；`.github/workflows/cli.yml` 会为 amd64/arm64 构建 darwin（cgo、CoreBluetooth）、linux 和 windows（纯 Go）版本，并上传压缩包和 `checksums.txt`。它还会生成一个 `versions.json` 产物（[格式](install/versions.example.json)）；把它合并进 `https://handsy.tech/cli/versions.json` 需要手动完成。`ESP32AGENT_VERSIONS_URL` 可以让 `upgrade` 和安装脚本改读另一份列表（用于测试）。测试安装脚本：`ESP32AGENT_ARCHIVE=/path/esp32agent_darwin_arm64.tar.gz sh cli/install/install.sh`（`checksums.txt` 放在同一目录）。
+
+### BLE 配网、仅网络运行
+
+本地修改版需要配套编译安装 CLI 和板子固件。默认流程：BLE 配对与 `net join` → TCP 7202 认证成功 → 电脑保存地址和密钥 → 板子保存仅网络设置并自动重启一次。重启后不初始化蓝牙控制器、不广播、不接受 BLE 连接，所有电脑命令和画面走网络。电脑程序、板子重启或网络临时断开后，都用保存的地址直接重连，不扫描 BLE。原来的 iPhone App 蓝牙控制在此模式下也不可用。
+
+建议给板子设置 DHCP 地址保留。地址变化时运行 `esp32agent net address 新IP --device 板子ID`。重新配网先运行 `esp32agent net setup`；若网络不可达，再把板子通过 USB 连接电脑，串口以 115200 波特率发送一行 `0 setup`。板子重启后恢复 BLE，保留原配对密钥，然后运行 `esp32agent net join`。网络不可达时不会自动重新开启蓝牙。

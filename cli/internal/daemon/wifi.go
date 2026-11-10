@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -14,13 +15,15 @@ import (
 	"github.com/onehumanbeing/esp32-iphone-agent/cli/internal/proto"
 )
 
-// wifiLink moves a board's session to its Wi-Fi link when this computer can reach the board's IP (same Wi-Fi,
-// or joined to the board's hotspot), and back to BLE when that link drops. BLE stays connected the whole time:
-// it finds the board, carries the IP (status), and is the way back. docs/cli-protocol.md, "Wi-Fi link".
+// wifiLink provisions over BLE, then moves to authenticated TCP and disables BLE.
 type wifiLink struct {
-	dial  func(ctx context.Context, ip string) (proto.Link, error)
-	hello func(ctx context.Context, l proto.Link) (*proto.Session, error)
-	every time.Duration // how often run checks
+	finishMu   sync.Mutex
+	save       func(string) error // persist the endpoint before the board disables BLE
+	address    string
+	configured bool
+	dial       func(ctx context.Context, ip string) (proto.Link, error)
+	hello      func(ctx context.Context, l proto.Link) (*proto.Session, error)
+	every      time.Duration // how often run checks
 
 	mu      sync.Mutex
 	mode    string    // "auto": Wi-Fi when reachable; "ble": stay on BLE
@@ -102,8 +105,13 @@ func (w *wifiLink) run(c *Conn) {
 		}
 		w.mu.Lock()
 		mode, due := w.mode, time.Now().After(w.retryAt)
+		configured, address := w.configured, w.address
 		w.mu.Unlock()
 		switch via := c.Via(); {
+		case via == "wifi" && mode == "auto" && !configured && due:
+			if err := w.finish(c, address); err != nil {
+				w.failed(err.Error())
+			}
 		case via == "wifi" && mode == "ble":
 			c.mu.Lock()
 			bl := c.bleLink
@@ -164,9 +172,54 @@ func (w *wifiLink) up(c *Conn, ip string) {
 		return
 	}
 	w.mu.Lock()
+	w.address = ip
+	w.mu.Unlock()
+	if err := w.finish(c, ip); err != nil {
+		w.failed(err.Error())
+		return
+	}
+	w.mu.Lock()
 	w.backoff, w.lastErr = 0, ""
 	w.mu.Unlock()
 	log.Printf("%s: session moved to Wi-Fi (%s)", c.ID, ip)
+}
+
+// finish commits a network-only handoff only after authenticated TCP commands succeed.
+func (w *wifiLink) finish(c *Conn, ip string) error {
+	w.finishMu.Lock()
+	defer w.finishMu.Unlock()
+	w.mu.Lock()
+	configured := w.configured
+	w.mu.Unlock()
+	if configured {
+		return nil
+	}
+
+	if net.ParseIP(ip) == nil {
+		return errors.New("no board network address")
+	}
+	if w.save != nil {
+		if err := w.save(ip); err != nil {
+			return fmt.Errorf("save network address: %w", err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if _, err := c.Send(ctx, "netonly on"); err != nil {
+		return fmt.Errorf("disable board BLE (updated firmware required): %w", err)
+	}
+	c.mu.Lock()
+	bl := c.bleLink
+	c.bleLink = nil
+	c.mu.Unlock()
+	if bl != nil {
+		bl.Close()
+	}
+	w.mu.Lock()
+	w.configured, w.lastErr, w.backoff = true, "", 0
+	w.mu.Unlock()
+	log.Printf("%s: network-only mode enabled; BLE released", c.ID)
+	return nil
 }
 
 // fallBack opens a new session on the BLE link bl, kept while the session ran over Wi-Fi.
@@ -212,8 +265,14 @@ func (s *Server) net(ctx context.Context, c *Conn, arg string) Response {
 		if rest != "auto" && rest != "ble" {
 			return fail(errors.New("usage: net via auto|ble"))
 		}
+		if rest == "ble" && len(s.Config.NetworkBoards(c.ID)) > 0 {
+			return fail(errors.New("BLE is disabled after network setup; restore provisioning over USB with 0 setup"))
+		}
 		c.wifi.setMode(rest)
 	case "join", "hotspot":
+		if len(s.Config.NetworkBoards(c.ID)) > 0 {
+			return fail(errors.New("restore BLE provisioning with net setup before changing the board network"))
+		}
 		var req map[string]string
 		if verb == "hotspot" {
 			req = map[string]string{"mode": "ap"}
@@ -244,8 +303,11 @@ func (s *Server) net(ctx context.Context, c *Conn, arg string) Response {
 		delete(board, "pass") // your Wi-Fi's password stays out of logs; the hotspot's is needed to join it
 	}
 	mode, lastErr := c.wifi.state()
-	out := map[string]any{"via": c.Via(), "prefer": mode, "board": board}
-	if lastErr != "" && c.Via() != "wifi" {
+	c.wifi.mu.Lock()
+	configured := c.wifi.configured
+	c.wifi.mu.Unlock()
+	out := map[string]any{"via": c.Via(), "prefer": mode, "board": board, "network_only": configured}
+	if lastErr != "" {
 		out["wifi_error"] = lastErr
 	}
 	return ok(out)

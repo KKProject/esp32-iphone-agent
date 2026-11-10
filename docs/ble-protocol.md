@@ -37,7 +37,7 @@ When the link drops, the board releases all buttons/keys (same as before).
 ## status (JSON, one notify per second, must fit one MTU; keep short keys)
 ```json
 {"up":123456,"rst":"power-on","heap":81234,"psram":6200000,"usb":"ok|asleep|off",
- "net":"ap|sta|none","ip":"192.168.4.1","sta":1,
+ "net":"sta|none","ip":"192.168.1.42","sta":1,
  "ap":"idle|connected|streaming","w":480,"h":1040,"kbps":180,"fps":4.8,"idr":2000,"gop":42000,
  "ble":{"mtu":247,"phy":2,"kbps":350,"drop":0,"rdrop":0,"n":1},
  "udp":{"n":1,"kbps":2400,"nack":3,"drop":0}}
@@ -68,7 +68,7 @@ BLE (1M PHY, ~140 kbps) can't keep up with the H.264 of animations, and P-frames
 moves to the board's Wi-Fi when the app can reach it. BLE stays the command link, keeps the app alive in the
 background, and carries the video again whenever no Wi-Fi session is up.
 
-- Board: UDP port 7200 on `ip` from `net` (192.168.4.1 on its hotspot); one app at a time.
+- Board: UDP port 7200 on `ip` from `net`; one app at a time.
 - App → board, text: `hello <vtok>` opens the session (answered `ok`; a wrong token is ignored), `ka` every
   1 s (answered `ok`; the board drops the session after 3 s without a datagram), `nack <from> <to>` resends
   that inclusive seq range (at most 256 chunks), `resync` resends config + GOP from the latest IDR.
@@ -109,9 +109,12 @@ u16 seq: `[seq u16 LE][flags][payload]`, payload `[u32 LE board ms][u32 LE RTP t
   and transcribes on the phone; the agent's step prompt then has a `Heard` block.
 
 ## net (JSON)
-Read: `{"mode":"ap","ssid":"ESP32Agent-1A2B","pass":"<random 12 chars>","ip":"192.168.4.1","vtok":"<32 hex>"}`
-(SoftAP credentials are generated once at first boot and kept in NVS; `vtok` is new every boot).
-Write `{"mode":"ap"}` or `{"mode":"sta","ssid":"...","pass":"..."}` — stored in NVS, board restarts Wi-Fi.
+The board has no hotspot: it joins the local network written here, and the iPhone has to be on the same network.
+Read: `{"mode":"sta","ssid":"Home","ip":"192.168.1.42","why":0,"vtok":"<32 hex>"}`. `ssid` is empty until a network
+was written; `ip` is `0.0.0.0` while not joined; `why` is the last failure (`wifi_err_reason_t`, e.g. 202 wrong
+password, 201 not found; 0 = none); `vtok` is new every boot. The password is never read back.
+Write `{"mode":"sta","ssid":"...","pass":"..."}` (empty `pass`: an open network) — stored in NVS, board restarts Wi-Fi.
+2.4 GHz only.
 
 ## AirPlay
 Receiver name `ESP32 Agent`, mirroring only, H.264 video plus AAC-ELD audio while there is sound (see Wi-Fi audio), resolution/fps from NVS.
@@ -119,7 +122,11 @@ Receiver name `ESP32 Agent`, mirroring only, H.264 video plus AAC-ELD audio whil
 ## Deviations (firmware notes)
 - `status`: if the negotiated MTU is too small for the full JSON (MTU-3 < ~255 bytes), the notify carries a
   reduced object `{"up","rst","usb","net","ap","ble":{"mtu"}}`; a `status` read always returns the last full JSON.
-- `sta` in `status` = number of stations on the board's hotspot (mode `ap`), or 1/0 = connected (mode `sta`).
-- `net` read in `sta` mode returns the station network's `ssid`/`pass`.
+- `sta` in `status` = 1/0: on the network.
 - `snap` while mirroring has stopped returns the last buffered GOP (check `"ap"` in status); `snap` without
   any video replies `err no video ...`.
+
+
+## App network-only variant
+
+In this local variant BLE provisions the App, then encrypted TCP 7203 carries commands and full status. The encrypted `net` read adds `atok` (persistent App network key) and `network_only`; neither network credential is exposed by the CLI `net` response. After `netonly on` the board restarts without initializing BLE. Video remains on TCP 7201, with its per-boot token refreshed over the App connection. See [App network protocol and recovery](app-network.md), including the iOS background-execution limitation. The BLE fallback/background behavior described above applies only before network-only handoff.

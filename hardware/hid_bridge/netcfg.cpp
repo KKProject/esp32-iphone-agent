@@ -4,27 +4,29 @@
 #include <Preferences.h>
 #include <esp_mac.h>
 #include <esp_random.h>
-#include <esp_netif.h>
 #include <esp_coexist.h>
-#include <esp_wifi.h>
 #include "wifi_video.h"
+#include "logbuf.h"
 
 #if STA_FROM_SECRETS
 #if __has_include("secrets.h")
 #include "secrets.h"  // WIFI_SSID, WIFI_PASS (git-ignored)
-#include "logbuf.h"
 #define BOOT_STA 1
 #else
-#warning "STA_FROM_SECRETS set but secrets.h is missing: booting as SoftAP"
+#warning "STA_FROM_SECRETS set but secrets.h is missing: using the Wi-Fi stored on the board"
 #endif
 #endif
 
 static Preferences prefs;
-static String apSsid, apPass, staSsid, staPass, mode;  // mode: "ap" | "sta"
+static String staSsid, staPass, mode;  // mode: "sta" | "off"
 static String pending;
+static bool networkOnly;
+static uint8_t appKey[32];
+static bool appKeyReady;
 static SemaphoreHandle_t pendingLock = xSemaphoreCreateMutex();
 // STA retries back off: a tight reconnect loop starves BLE, which shares the radio.
 static uint32_t retryAt = 0, retryGap = 5000;
+static volatile int staWhy;  // why the last try failed (wifi_err_reason_t), 0 = no failure; `why` in net_json()
 
 String board_suffix() {
   uint8_t mac[6];
@@ -32,13 +34,6 @@ String board_suffix() {
   char s[5];
   snprintf(s, sizeof s, "%02X%02X", mac[4], mac[5]);
   return s;
-}
-
-static String randomPass() {
-  const char *abc = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";  // no look-alikes
-  String p;
-  for (int i = 0; i < 12; i++) p += abc[esp_random() % strlen(abc)];
-  return p;
 }
 
 // Value of a string field in a flat JSON object ("" if absent). Handles \" and \\ escapes.
@@ -62,78 +57,56 @@ static String jsonEsc(const String &s) {
   return o;
 }
 
-// DHCP replies without a router or DNS server: the phone then keeps cellular as its internet
-// route and uses the hotspot only for 192.168.4.x (AirPlay to the board).
-static void noDefaultRoute() {
-  esp_netif_t *ap = WiFi.AP.netif();
-  if (!ap) return;
-  uint8_t off = 0;
-  esp_netif_dhcps_stop(ap);
-  esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS, &off, sizeof(off));
-  esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &off, sizeof(off));
-  esp_netif_dhcps_start(ap);
-}
-
 static void startWifi() {
   WiFi.disconnect(true);
-  WiFi.softAPdisconnect(true);
   WiFi.setHostname("iphone-agent");
+  staWhy = 0;
   if (mode == "off") {  // diagnostics: BLE alone on the radio
     WiFi.mode(WIFI_OFF);
-  } else if (mode == "sta") {
-    WiFi.mode(WIFI_STA);  // keep modem sleep on: required while BLE shares the radio
-    WiFi.setAutoReconnect(false);
-    retryGap = 5000;
-    retryAt = millis() + retryGap;
-    if (staPass.isEmpty()) WiFi.setMinSecurity(WIFI_AUTH_OPEN);  // the core rejects open networks by default
-    WiFi.begin(staSsid.c_str(), staPass.c_str());
-  } else {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(apSsid.c_str(), apPass.c_str(), 6, 0, 4);
-    // The phone is centimetres away and powers the board: low TX power cuts the current peaks that made the
-    // phone drop its USB power (the board then came back with reset reason "power-on").
-    WiFi.setTxPower(WIFI_POWER_5dBm);
-#if AP_TUNE  // A/B knob (flash.sh --ap-tune): a 20 MHz channel and fewer beacons leave BLE more airtime
-    WiFi.softAPbandwidth(WIFI_BW_HT20);
-    wifi_config_t c;
-    if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {
-      c.ap.beacon_interval = 300;
-      esp_wifi_set_config(WIFI_IF_AP, &c);
-    }
-#endif
-    noDefaultRoute();
+    return;
   }
+  WiFi.mode(WIFI_STA);  // sockets opened at boot need the network stack
+  // BLE provisioning requires modem sleep for coexistence. With Bluetooth disabled,
+  // keep Wi-Fi awake so the computer's commands do not wait for power-save delivery.
+  WiFi.setSleep(!networkOnly);
+  // The phone powers the board: full TX power's current peaks made it drop its USB power (the board then came back
+  // with reset reason "power-on"). The router is further away than the hotspot's phone was, so not the hotspot's 5 dBm.
+  WiFi.setTxPower(WIFI_POWER_11dBm);
+  if (staSsid.isEmpty()) return;  // waits for a `net` write over BLE
+  WiFi.setAutoReconnect(false);
+  retryGap = 5000;
+  retryAt = millis() + retryGap;
+  WiFi.setMinSecurity(staPass.isEmpty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK);  // the core rejects open networks by default
+  WiFi.begin(staSsid.c_str(), staPass.c_str());
 }
 
+static void onWifi(arduino_event_id_t e, arduino_event_info_t info) {
+  if (e == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) staWhy = info.wifi_sta_disconnected.reason;
+  if (e == ARDUINO_EVENT_WIFI_STA_GOT_IP) staWhy = 0;
 #if DEBUG_SERIAL
-static void logWifi(arduino_event_id_t e, arduino_event_info_t info) {
   if (e == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) board_log("wifi: disconnected, reason %d", info.wifi_sta_disconnected.reason);
   if (e == ARDUINO_EVENT_WIFI_STA_GOT_IP) board_log("wifi: got ip %s", WiFi.localIP().toString().c_str());
-}
 #endif
+}
 
 void net_begin() {
-#if DEBUG_SERIAL
-  WiFi.onEvent(logWifi);
-#endif
+  WiFi.onEvent(onWifi);
   prefs.begin("agent", false);
-  apSsid = prefs.getString("ap_ssid", "");
-  apPass = prefs.getString("ap_pass", "");
-  if (apSsid.isEmpty() || apPass.length() < 8) {
-    apSsid = "ESP32Agent-" + board_suffix();
-    apPass = randomPass();
-    prefs.putString("ap_ssid", apSsid);
-    prefs.putString("ap_pass", apPass);
+  networkOnly = prefs.getBool("net_only", false);
+  appKeyReady = prefs.getBytes("app_key",appKey,sizeof appKey) == sizeof appKey;
+  if (!appKeyReady) {
+    esp_fill_random(appKey,sizeof appKey);
+    appKeyReady = prefs.putBytes("app_key",appKey,sizeof appKey) == sizeof appKey;
   }
-  mode = prefs.getString("mode", "ap");
+  mode = prefs.getString("mode", "sta");
+  if (mode != "off") mode = "sta";  // boards from before this firmware stored "ap"
   staSsid = prefs.getString("sta_ssid", "");
   staPass = prefs.getString("sta_pass", "");
 #ifdef BOOT_STA
-  mode = "sta";  // build-time test mode, not stored
+  mode = "sta";  // build-time test network, not stored
   staSsid = WIFI_SSID;
   staPass = WIFI_PASS;
 #endif
-  if (mode == "sta" && staSsid.isEmpty()) mode = "ap";
   startWifi();
   net_coex("balance");
 }
@@ -159,7 +132,7 @@ void net_request(const String &json) {
 }
 
 static void retrySta() {
-  if (mode != "sta") return;
+  if (mode != "sta" || staSsid.isEmpty()) return;
   if (WiFi.status() == WL_CONNECTED) {
     retryGap = 5000;
     return;
@@ -179,7 +152,7 @@ void net_poll() {
   xSemaphoreGive(pendingLock);
   if (j.isEmpty()) return;
   String m = jsonStr(j, "mode");
-  if (m == "ap" || m == "off") {
+  if (m == "off") {
     mode = m;
   } else if (m == "sta" && jsonStr(j, "ssid").length()) {
     mode = "sta";
@@ -195,20 +168,25 @@ void net_poll() {
 }
 
 String net_json(bool vtok) {
-  bool sta = mode == "sta";
-  String j = String("{\"mode\":\"") + mode + "\",\"ssid\":\"" + jsonEsc(sta ? staSsid : apSsid) + "\",\"pass\":\"" +
-             jsonEsc(sta ? staPass : apPass) + "\",\"ip\":\"" + net_ip() + "\"";
+  // The password only goes in: nothing reads it back, also not USB serial's `netinfo`.
+  String j = String("{\"mode\":\"") + mode + "\",\"ssid\":\"" + jsonEsc(staSsid) + "\",\"ip\":\"" + net_ip() +
+             "\",\"why\":" + String((int)staWhy);
+  j += String(",\"network_only\":") + (networkOnly ? "true" : "false");
+  if (vtok && appKeyReady) {
+    char hex[65];
+    for (int i=0;i<32;i++) snprintf(hex+2*i,3,"%02x",appKey[i]);
+    j += String(",\"atok\":\"") + hex + "\"";
+  }
   return j + (vtok ? ",\"vtok\":\"" + wv_token() + "\"}" : "}");
 }
 
 const char *net_mode() {
-  if (mode == "sta") return WiFi.status() == WL_CONNECTED ? "sta" : "none";
-  return "ap";
+  return net_up() ? "sta" : "none";
 }
 
-String net_ip() { return mode == "sta" ? WiFi.localIP().toString() : WiFi.softAPIP().toString(); }
-int net_peers() { return mode == "sta" ? WiFi.status() == WL_CONNECTED : WiFi.softAPgetStationNum(); }
-bool net_up() { return mode == "sta" ? WiFi.status() == WL_CONNECTED : true; }
+String net_ip() { return WiFi.localIP().toString(); }
+int net_peers() { return net_up(); }
+bool net_up() { return mode == "sta" && WiFi.status() == WL_CONNECTED; }
 
 uint16_t cfg_width() { return prefs.getUShort("w", 480); }
 uint16_t cfg_height() { return prefs.getUShort("h", 1040); }
@@ -225,4 +203,17 @@ void cfg_ed25519_seed(uint8_t seed[32]) {
   if (prefs.getBytes("ed_seed", seed, 32) == 32) return;
   esp_fill_random(seed, 32);
   prefs.putBytes("ed_seed", seed, 32);
+}
+
+bool net_only() { return networkOnly; }
+bool net_set_only(bool enabled) {
+  if (prefs.putBool("net_only", enabled) != 1) return false;
+  networkOnly = enabled;
+  return true;
+}
+
+bool net_app_key(uint8_t out[32]) {
+  if (!appKeyReady) return false;
+  memcpy(out,appKey,32);
+  return true;
 }

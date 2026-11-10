@@ -36,7 +36,9 @@ const usage = `esp32agent: see and drive an iPhone through an ESP32 Agent board,
   screencapture --format h264|mjpeg   video to stdout
   device info                      board status
   net                              the CLI's link (BLE or Wi-Fi) and the board's Wi-Fi
-  net via auto|ble                 auto: move to Wi-Fi when this computer reaches the board (default)
+  net via auto|ble                 auto: provision over BLE, then disable BLE and use Wi-Fi (default)
+  net setup                       restore BLE provisioning (USB recovery if the network is unreachable)
+  net address IP                  update a configured board's saved IP after a DHCP change
   net join                         the board joins your Wi-Fi: asks for its name and password, sends them over
                                    Bluetooth, then moves the link to Wi-Fi (the iPhone mirrors over it too)
   net join SSID [PASSWORD]         the same, non-interactive

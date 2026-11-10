@@ -44,16 +44,18 @@ struct ConnectPage: View {
                        message: "Connect the board to the USB-C port. I'll find it over Bluetooth; tap Pair when iOS asks.")
             if !board.connected { MiniPhoneDemo(kind: .plugIn) }
             Panel {
-                switch board.state {
-                case .unauthorized:
-                    Label("Bluetooth is not allowed for ESP32 Agent.", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Palette.warning)
-                    Button("Open Settings") { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) }
-                        .padding(.top, Space.s)
-                case .poweredOff:
-                    Label("Turn on Bluetooth in Control Center.", systemImage: "antenna.radiowaves.left.and.right.slash")
-                default:
-                    boards
+                if board.networkConfigured { boards } else {
+                    switch board.state {
+                    case .unauthorized:
+                        Label("Bluetooth is not allowed for ESP32 Agent.", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Palette.warning)
+                        Button("Open Settings") { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) }
+                            .padding(.top, Space.s)
+                    case .poweredOff:
+                        Label("Turn on Bluetooth in Control Center.", systemImage: "antenna.radiowaves.left.and.right.slash")
+                    default:
+                        boards
+                    }
                 }
             }
             if !board.connected { FirmwareLinks() }
@@ -140,40 +142,38 @@ private struct TightLabel: LabelStyle {
     }
 }
 
-/// 2 · Let it see the screen: join the board's Wi-Fi (one tap, the system asks), then Screen Mirroring.
-/// The page's one action is the bottom button (OnboardingView); manual join shows only if one-tap fails.
+/// 2 · Let it see the screen: put the board on this iPhone's Wi-Fi, then Screen Mirroring.
+/// The page's one action is the bottom button (OnboardingView).
 struct SeePage: View {
     @ObservedObject var app: AppModel
     @ObservedObject var board: BoardLink
-    @Binding var onWiFi: Bool
-    @State private var copied = false
-    @Environment(\.scenePhase) private var scenePhase
+    @Binding var ssid: String
+    @Binding var password: String
 
     private var streaming: Bool { board.connected && board.status?.ap == "streaming" }
-    private var joined: Bool { app.onBoardHotspot(manual: onWiFi) }
-    private var failure: String? { if case .failed(let why) = app.join { return why } else { return nil } }
+    private var joined: Bool { app.boardOnNetwork }
+    private var failure: String? { if case .failed(let why) = app.boardWiFi { return why } else { return nil } }
 
     var body: some View {
         VStack(spacing: Space.xl) {
-            PageHeader(mood: streaming ? .success : (app.join.busy || joined) ? .listening : failure != nil ? .failure : .idle,
+            PageHeader(mood: streaming ? .success : (app.boardWiFi.busy || joined) ? .listening : failure != nil ? .failure : .idle,
                        title: "Let Me See the Screen",
-                       message: "Screen Mirroring goes to the board over its own Wi-Fi.")
+                       message: "Screen Mirroring goes to the board over your Wi-Fi.")
             Panel {
-                CheckRow(title: "Join the board's Wi-Fi", done: joined, active: !joined, waiting: app.join.busy && !joined,
-                         detail: joined ? nil : app.join == .verifying ? "Checking the connection…"
-                            : app.join.busy ? "Joining usually takes up to 10 seconds — hang tight." : failure.map { LocalizedStringKey($0) })
+                CheckRow(title: "Connect the board to Wi-Fi", done: joined, active: !joined, waiting: app.boardWiFi.busy && !joined,
+                         detail: joined ? nil : app.boardWiFi.busy ? "Joining can take up to 30 seconds — hang tight."
+                            : failure.map { LocalizedStringKey($0) })
                 Divider().padding(.vertical, Space.s)
                 CheckRow(title: "Start Screen Mirroring", done: streaming, active: joined && !streaming)
             }
             if !joined {
-                if let net = app.manualHotspot, let ssid = net.ssid, failure != nil { manual(ssid: ssid, pass: net.pass) }
+                Panel { BoardWiFiFields(ssid: $ssid, password: $password) }
                 VStack(alignment: .leading, spacing: Space.s) {
-                    Label("Turn off Personal Hotspot first: while it shares this iPhone's internet, the iPhone can't join the board's Wi-Fi.",
-                          systemImage: "personalhotspot")
-                    Label("Internet uses cellular data while on the board's Wi-Fi.", systemImage: "antenna.radiowaves.left.and.right")
+                    Label("Enter the Wi-Fi this iPhone is on. The name and password go to the board over Bluetooth.", systemImage: "wifi")
+                    Label("The board only sees 2.4 GHz Wi-Fi.", systemImage: "antenna.radiowaves.left.and.right")
+                    Label("Guest and office networks may keep devices apart; then mirroring can't find the board.", systemImage: "exclamationmark.triangle")
                 }
                 .font(.footnote).foregroundStyle(.secondary)
-                Button("I'm already on the board's Wi-Fi") { onWiFi = true }.font(.footnote)
             } else if !streaming {
                 Text("Now swipe down from the top-right corner and tap **Screen Mirroring → ESP32 Agent**.")
                     .multilineTextAlignment(.center)
@@ -185,47 +185,15 @@ struct SeePage: View {
                         Text("Waiting for Screen Mirroring…")
                     }
                     Label("Keep the screen unlocked: locking stops mirroring.", systemImage: "lock.open")
+                    Label("Not in the list? Keep this iPhone on the same Wi-Fi as the board.", systemImage: "wifi")
                 }
                 .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: joined)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: app.join)
-        .task {  // join once by itself, then keep checking every 2 s while on this step
-            if !joined { app.startJoin(auto: true) }
-            while !Task.isCancelled && !streaming {
-                await app.refreshHotspot()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await app.refreshHotspot() } } }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: app.manualHotspot?.ssid)
-    }
-
-    /// One-tap join failed: the network and its password, to join in Settings › Wi-Fi.
-    private func manual(ssid: String, pass: String?) -> some View {
-        Panel {
-            LabeledContent("Network") { Text(verbatim: ssid).font(.body.monospaced()).textSelection(.enabled) }
-            if let pass {
-                Divider().padding(.vertical, Space.s)
-                LabeledContent("Password") {
-                    HStack(spacing: Space.s) {
-                        Text(verbatim: pass).font(.body.monospaced().weight(.semibold)).textSelection(.enabled)
-                        Button {
-                            UIPasteboard.general.string = pass
-                            copied = true
-                            Haptics.success()
-                        } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
-                            .accessibilityLabel(Text(copied ? "Copied" : "Copy"))
-                    }
-                }
-                Divider().padding(.vertical, Space.s)
-                Button {
-                    UIPasteboard.general.string = pass; copied = true
-                    Hotspot.openWiFiSettings()
-                } label: { Label("Copy Password & Open Settings", systemImage: "gear") }
-                    .font(.subheadline.weight(.semibold))
-            }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: app.boardWiFi)
+        .onChange(of: board.net?.ssid, initial: true) { _, name in
+            if ssid.isEmpty, let name { ssid = name }
         }
     }
 }

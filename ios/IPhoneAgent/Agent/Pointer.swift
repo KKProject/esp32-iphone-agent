@@ -526,7 +526,9 @@ import UIKit
         try await device.send("move 0 \(span.h / 10)")
         do {
             try await device.send("press")
-            try await device.send("move 0 \(-Int(Double(span.h) * 0.85))")  // to the middle only (0.45) left the app card half-way (2026-10-19)
+            // To the middle only (0.45) left the app card half-way (2026-10-19). At the top speed: at the default pace the
+            // 0.8 s drag left the app in front (2026-11-09), and iOS treats a slow one as a rest.
+            try await device.send("move 0 \(-Int(Double(span.h) * 0.85)) 40")
         } catch {
             _ = try? await device.send("release")
             throw error

@@ -187,7 +187,7 @@ final class VideoTests: XCTestCase {
     func testResumePointFollowsDecodedUnitsAndIsForgottenOnDecoderErrors() async throws {
         let decoder = H264Decoder(), feed = VideoFeed(decoder: decoder)
         XCTAssertNil(feed.resumeMs)
-        feed.receive(Data([1, 0, 0x05 | 0x08, 5, 0, 0, 0, 0, 0, 0, 1, 0x67]))  // config: not a resume point
+        feed.receive(Data([1, 0, UInt8(0x05 | 0x08), 5, 0, 0, 0, 0, 0, 0, 1, 0x67]))  // config: not a resume point
         XCTAssertNil(feed.resumeMs)
         feed.receive(Data([2, 0, 0x07, 9, 0, 0, 0, 0, 0, 0, 1, 0x65]))  // IDR stamped 9
         XCTAssertEqual(feed.resumeMs, 9)

@@ -28,7 +28,7 @@ struct BoardStatus: Codable, Equatable {
     var heap: Int?
     var psram: Int?
     var usb: String?   // ok | asleep | off
-    var net: String?   // ap | sta | none
+    var net: String?   // sta (on the Wi-Fi) | none
     var ip: String?
     var sta: Int?
     var ap: String?    // idle | connected | streaming
@@ -58,13 +58,16 @@ struct BoardStatus: Codable, Equatable {
     }
 }
 
-/// The `net` characteristic: SoftAP credentials (read) or Wi-Fi mode (write).
+/// The `net` characteristic: where the board is (read; never the password) or the network to join (write).
 struct NetConfig: Codable, Equatable {
     var mode: String
     var ssid: String?
     var pass: String?
     var ip: String?
     var vtok: String?  // per-boot token for the Wi-Fi video channel (VideoSocket)
+    var atok: String?  // persistent app network key, provisioned through bonded BLE
+    var network_only: Bool?
+    var why: Int?      // why the board's last try failed (wifi_err_reason_t), 0 = no failure
 }
 
 /// A `reply` notify: `<id> ok [extra]` or `<id> err <reason>`.

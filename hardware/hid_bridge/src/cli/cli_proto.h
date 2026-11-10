@@ -35,6 +35,11 @@ size_t cli_seal(const uint8_t key[16], uint8_t type, char stream, uint32_t ctr, 
 // Opens a frame into plain (room for n - CLI_OVERHEAD). Returns the plain length, or -1 if it does not verify.
 int cli_open(const uint8_t key[16], char stream, const uint8_t *frame, size_t n, uint32_t *ctr, uint8_t *plain);
 
+// App TCP uses the same authenticated framing with a full 16-byte GCM tag (CryptoKit compatible).
+#define APP_OVERHEAD (CLI_HDR_LEN + 16)
+size_t app_seal(const uint8_t key[16], char stream, uint32_t ctr, const uint8_t *plain, size_t n, uint8_t *out);
+int app_open(const uint8_t key[16], char stream, const uint8_t *frame, size_t n, uint32_t *ctr, uint8_t *plain);
+
 #ifdef __cplusplus
 }
 #endif

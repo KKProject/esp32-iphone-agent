@@ -30,7 +30,7 @@ enum VideoTransport {
 /// assembler lost its place); the board sends [u16 LE length][chunk] records, a zero-length one answering
 /// hello/ka. After the ack the app sends "audio\n" if it wants the AirPlay audio: records with flag 0x80
 /// (AudioRecord), split off here before the video assembler sees them.
-/// A plain BSD socket so the kernel routes 192.168.4.x to the hotspot (see VideoSocket).
+/// A plain BSD socket so the kernel picks the route to the board (see VideoSocket).
 @MainActor final class VideoStream: WifiVideoLink {
     static let port: UInt16 = 7201
 

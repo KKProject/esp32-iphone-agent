@@ -81,7 +81,7 @@ struct FirmwareSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmSkip = false
 
-    private var onBoardWiFi: Bool { app.onBoardHotspot(manual: false) }
+    private var onWiFi: Bool { app.boardOnNetwork }
 
     var body: some View {
         Group {
@@ -90,7 +90,7 @@ struct FirmwareSheet: View {
         .padding(Space.xl)
         .interactiveDismissDisabled(updater.busy || updater.mustUpdate || updater.outdated)  // outdated: Skip asks first
         .alert("Use the old firmware?", isPresented: $confirmSkip) {
-            Button("Update", role: .cancel) { if onBoardWiFi && updater.blocker == nil { updater.install() } }
+            Button("Update", role: .cancel) { if onWiFi && updater.blocker == nil { updater.install() } }
                 .keyboardShortcut(.defaultAction)  // as the cancel role it stands in for Cancel; still the default
             Button("Skip Anyway", role: .destructive) {
                 updater.skip()
@@ -98,12 +98,6 @@ struct FirmwareSheet: View {
             }
         } message: {
             Text("Taps may land in the wrong place and the board may disconnect. You can update any time from Settings › Board.")
-        }
-        .task {
-            while !Task.isCancelled {
-                await app.refreshHotspot()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
         }
     }
 
@@ -150,15 +144,11 @@ struct FirmwareSheet: View {
                 }
             } else if let blocker = updater.blocker {
                 Text(verbatim: blocker).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            } else if !onBoardWiFi {
-                Text(joinText).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button { app.startJoin() } label: {
-                    HStack { Text("Join the Board's Wi-Fi"); if app.join.busy { ProgressView().tint(Color(.systemBackground)) } }
-                }
-                .buttonStyle(BigButton(tint: .primary, ink: Color(.systemBackground)))
-                .disabled(app.join.busy)
+            } else if !onWiFi {
+                Text("The update goes over Wi-Fi. Connect the board to Wi-Fi in Settings › Board first.")
+                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             } else {
-                Label("On the board's Wi-Fi", systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary)
+                Label("The board is on Wi-Fi", systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary)
                 Button("Update Now") { updater.install() }
                     .buttonStyle(BigButton(tint: .primary, ink: Color(.systemBackground)))
             }
@@ -169,11 +159,6 @@ struct FirmwareSheet: View {
                 Button("Later") { dismiss() }.buttonStyle(BigButton(tint: Color(.secondarySystemFill), ink: .primary))
             }
         }
-    }
-
-    private var joinText: String {
-        if case .failed(let reason) = app.join { return reason }
-        return String(localized: "The update goes over the board's Wi-Fi. Join it first; the internet keeps working over cellular.")
     }
 }
 

@@ -596,7 +596,7 @@ import XCTest
         XCTAssertFalse(device.sent.contains("key cmd+h"))
         let press = try XCTUnwrap(device.sent.firstIndex(of: "press"))
         XCTAssertEqual(device.sent[press - 1], "move 0 80")  // pushed past the bottom edge first
-        XCTAssertEqual(device.sent[press + 1], "move 0 -680")  // then up 85% of the height, with no end hold
+        XCTAssertEqual(device.sent[press + 1], "move 0 -680 40")  // then up 85% of the height, fast, with no end hold
     }
 
 

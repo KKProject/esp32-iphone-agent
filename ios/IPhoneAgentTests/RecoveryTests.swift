@@ -9,7 +9,7 @@ import XCTest
     func testStagesAfterABoardReboot() {
         var r = Recovery(at: 100)
         XCTAssertEqual(r.next(link(false), at: 100), .wait(.init(part: .board, ask: false)))
-        XCTAssertEqual(r.next(link(sta: 0, ap: "idle"), at: 107), .wait(.init(part: .hotspot, ask: false)))
+        XCTAssertEqual(r.next(link(sta: 0, ap: "idle"), at: 107), .wait(.init(part: .network, ask: false)))
         XCTAssertEqual(r.next(link(sta: 1, ap: "idle"), at: 133), .wait(.init(part: .mirroring, ask: false)))
         XCTAssertEqual(r.next(link(frameAt: 99), at: 140), .wait(.init(part: .frames, ask: false)),
                        "streaming, but no frame newer than the loss yet")
@@ -18,9 +18,9 @@ import XCTest
 
     func testAsksOnlyAfterEachPartsQuietTime() {
         var r = Recovery(at: 0)
-        XCTAssertEqual(r.next(link(sta: 0), at: 0), .wait(.init(part: .hotspot, ask: false)))
-        XCTAssertEqual(r.next(link(sta: 0), at: 29), .wait(.init(part: .hotspot, ask: false)))
-        XCTAssertEqual(r.next(link(sta: 0), at: 30), .wait(.init(part: .hotspot, ask: true)))
+        XCTAssertEqual(r.next(link(sta: 0), at: 0), .wait(.init(part: .network, ask: false)))
+        XCTAssertEqual(r.next(link(sta: 0), at: 29), .wait(.init(part: .network, ask: false)))
+        XCTAssertEqual(r.next(link(sta: 0), at: 30), .wait(.init(part: .network, ask: true)))
         XCTAssertEqual(r.next(link(ap: "idle"), at: 31), .wait(.init(part: .mirroring, ask: false)), "a new part starts quiet")
         XCTAssertEqual(r.next(link(ap: "idle"), at: 50), .wait(.init(part: .mirroring, ask: false)))
         XCTAssertEqual(r.next(link(ap: "idle"), at: 51), .wait(.init(part: .mirroring, ask: true)))
@@ -68,11 +68,11 @@ import XCTest
         XCTAssertEqual(Recovery.Stage(part: .board, ask: false).status, .waitingForBoard)
         XCTAssertEqual(Recovery.Stage(part: .board, ask: true).line, IslandStatus.waitingForBoard.full)
         XCTAssertEqual(Recovery.Stage(part: .board, ask: false).status.minimal, "Board")
-        XCTAssertEqual(Recovery.Stage(part: .hotspot, ask: false).status.minimal, "Wi-Fi")
+        XCTAssertEqual(Recovery.Stage(part: .network, ask: false).status.minimal, "Wi-Fi")
         XCTAssertEqual(Recovery.Stage(part: .mirroring, ask: false).status.minimal, "Mirror")
         XCTAssertEqual(Recovery.Stage(part: .mirroring, ask: false).status.full, "Waiting for mirroring…")
         XCTAssertEqual(Recovery.Stage(part: .mirroring, ask: true).status.full, "Tap Screen Mirroring → ESP32 Agent to continue")
-        for part in [Recovery.Part.board, .hotspot, .mirroring, .frames] {
+        for part in [Recovery.Part.board, .network, .mirroring, .frames] {
             for ask in [false, true] {
                 XCTAssertLessThanOrEqual(Recovery.Stage(part: part, ask: ask).status.short.count, IslandStatus.compactLimit)
             }

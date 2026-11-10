@@ -51,9 +51,8 @@ extension AppModel {
     func mockReady() {
         if !board.connected {
             board.mockConnect(name: "ESP32 Agent 7C3E",
-                              net: NetConfig(mode: "ap", ssid: "ESP32Agent-7C3E", pass: nil, ip: "192.168.4.1"))
+                              net: NetConfig(mode: "sta", ssid: "Home Wi-Fi", ip: "192.168.1.42"))
         }
-        hotspotSSID = "ESP32Agent-7C3E"
         mockMirroring = true
         modelOK = true
         if feed.frame == nil { showMockFrame() }
@@ -61,7 +60,7 @@ extension AppModel {
         if !pointer.calibrated { pointer.mockCalibrated(quality: 0.006) }
     }
 
-    /// Demo: Screen Mirroring "starts" a moment after the hotspot is joined.
+    /// Demo: Screen Mirroring "starts" a moment after the board joined the Wi-Fi.
     func mockStartMirroring() {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -161,7 +160,7 @@ extension AppModel {
     private static func status(up: Int, n: Int, mirroring: Bool) -> BoardStatus {
         // a board on released firmware: without `fw` it reads as pre-OTA and the required Board Update covers the app
         BoardStatus(fw: MockMode.firmware, up: up, rst: "power-on", heap: 81_234 - n % 7 * 120, psram: 6_200_000, usb: "ok",
-                    net: "ap", ip: "192.168.4.1", sta: 1, ap: mirroring ? "streaming" : "idle", w: 480, h: 1040,
+                    net: "sta", ip: "192.168.1.42", sta: 1, ap: mirroring ? "streaming" : "idle", w: 480, h: 1040,
                     kbps: Double.random(in: 150...230), fps: Double.random(in: 4.4...5), idr: 2000,
                     gop: 42_000 + n % 5 * 3000,
                     ble: .init(mtu: 247, phy: 2, kbps: Double.random(in: 320...380), drop: n / 30))

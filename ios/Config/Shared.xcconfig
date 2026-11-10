@@ -6,7 +6,7 @@
 IA_BUNDLE_ID = com.example.esp32agent
 
 // Once Xcode is signed in, set IA_ENTITLEMENTS = IPhoneAgent/IPhoneAgent.entitlements in Local.xcconfig
-// to enable one-tap joining of the board's hotspot, and IA_WIDGET_ENTITLEMENTS =
+// for time-sensitive alerts and the App Group, and IA_WIDGET_ENTITLEMENTS =
 // AgentActivity/AgentActivity.entitlements so the widgets share the App Group.
 IA_ENTITLEMENTS =
 IA_WIDGET_ENTITLEMENTS =

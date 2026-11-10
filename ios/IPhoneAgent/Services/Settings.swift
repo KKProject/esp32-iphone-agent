@@ -1,6 +1,4 @@
 import Foundation
-import Network
-import NetworkExtension
 import Security
 import UIKit
 
@@ -371,59 +369,6 @@ enum Keychain {
         q[kSecValueData] = Data(value.utf8)
         q[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock  // the agent may run while the phone is locked
         SecItemAdd(q as CFDictionary, nil)
-    }
-}
-
-/// Joins the board's SoftAP with the credentials read over BLE (never shown or logged).
-enum Hotspot {
-    static func join(_ net: NetConfig) async throws {
-        guard let ssid = net.ssid, let pass = net.pass else { throw DeviceError(message: "board sent no hotspot credentials") }
-        let config = NEHotspotConfiguration(ssid: ssid, passphrase: pass, isWEP: false)
-        config.joinOnce = false
-        do {
-            try await NEHotspotConfigurationManager.shared.apply(config)
-        } catch let e as NSError where e.domain == NEHotspotConfigurationErrorDomain
-                    && e.code == NEHotspotConfigurationError.alreadyAssociated.rawValue {
-            return
-        }
-    }
-
-    /// For the debug log: domain, code, the NEHotspotConfigurationError name and the message.
-    static func describe(_ e: NSError) -> String {
-        guard e.domain == NEHotspotConfigurationErrorDomain else { return "\(e.domain) \(e.code): \(e.localizedDescription)" }
-        let names = ["invalid", "invalidSSID", "invalidWPAPassphrase", "invalidWEPPassphrase", "invalidEAPSettings",
-                     "invalidHS20Settings", "invalidHS20DomainName", "userDenied", "internal", "pending",
-                     "systemConfiguration", "unknown", "joinOnceNotSupported", "alreadyAssociated",
-                     "applicationIsNotInForeground", "invalidSSIDPrefix", "userUnauthorized", "systemDenied"]
-        let name = names.indices.contains(e.code) ? names[e.code] : "?"
-        return "\(e.domain) \(e.code) \(name): \(e.localizedDescription)"
-    }
-
-    static func userDenied(_ e: NSError) -> Bool {
-        e.domain == NEHotspotConfigurationErrorDomain && e.code == NEHotspotConfigurationError.userDenied.rawValue
-    }
-
-    /// This app's page in Settings: the only public link. iOS 18+ has no link to the Wi-Fi page at all.
-    @MainActor static func openWiFiSettings() {
-        UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
-    }
-
-    /// False while the phone has no Wi-Fi link at all: Wi-Fi is off, or on but on no network. iOS tells apps
-    /// nothing about the switch itself, and with Wi-Fi off apply() still "succeeds" without joining.
-    nonisolated(unsafe) private(set) static var wifiLink = true
-    private static let monitor: NWPathMonitor = {
-        let m = NWPathMonitor()
-        m.pathUpdateHandler = { path in wifiLink = path.availableInterfaces.contains { $0.type == .wifi } }
-        m.start(queue: DispatchQueue(label: "wifi-path"))
-        return m
-    }()
-
-    /// Start watching the Wi-Fi link (call early: the first path arrives a moment later).
-    static func watchWiFi() { _ = monitor }
-
-    /// The SSID the phone is on, if it is one of ours (needs the hotspot entitlement).
-    static func currentSSID() async -> String? {
-        await NEHotspotNetwork.fetchCurrent()?.ssid
     }
 }
 
