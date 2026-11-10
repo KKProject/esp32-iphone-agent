@@ -86,6 +86,12 @@ MCP tools: `screenshot` (returns the image), `tap`, `longpress`, `swipe`, `type_
 `device_info`, and `history`, `intent_list`, `intent_show`, `intent_save`. The loop is screenshot, decide, one action,
 screenshot: see [SKILL.md](SKILL.md).
 
+The `graph_*` tools and `esp32agent graph OP --input FILE|-` add a local SQLite navigation graph:
+shared page-state nodes, directed actions, independent reference images and explicit verification evidence.
+`graph_path` plans with conditions, reliability and recency; `graph_prepare` converts one saved action into
+normal MCP pixel arguments. Neither executes input or detects the current page. See the
+[navigation graph guide (Chinese)](../docs/navigation-graph.zh-CN.md) for schemas and examples.
+
 ## History and intents
 
 The daemon records every action and screenshot as the iOS app records its runs: `runs/<yyyyMMdd-HHmmss>/steps.jsonl`

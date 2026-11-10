@@ -43,6 +43,11 @@ func jsonResult(v any, err error) map[string]any {
 
 // callLocal handles the local tools; ok=false for the others.
 func (a *App) callLocal(name string, args map[string]any) (map[string]any, bool) {
+	for _, t := range graphTools {
+		if name == t.Name {
+			return jsonResult(a.graphCall(name, args)), true
+		}
+	}
 	s := func(k string) string { v, _ := args[k].(string); return v }
 	switch name {
 	case "history":

@@ -55,6 +55,7 @@ const usage = `esp32agent: see and drive an iPhone through an ESP32 Agent board,
   intent delete NAME
   intent export NAME... [--screenshots] [--output FILE]   .esp32intent file for the iOS app
   intent import FILE
+  graph OP --input FILE|-         SQLite navigation graph (node-save, edge-save, observe, path, prepare, ...)
   report --intent NAME [--screenshots]   prepare a mail to the developer with one intent; you send it
   upgrade [--check] [--force]      install the latest release
   mcp                              MCP server on stdio
@@ -144,6 +145,8 @@ func (a *App) Run(args []string) int {
 		return a.mcp(os.Stdin)
 	case "history":
 		return a.history(rest)
+	case "graph":
+		return a.graph(rest)
 	case "intent", "intents":
 		return a.intent(rest)
 	case "report":

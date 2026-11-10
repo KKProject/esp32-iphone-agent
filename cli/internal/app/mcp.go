@@ -97,11 +97,11 @@ func (a *App) handleRPC(m rpcMsg) *rpcMsg {
 		}
 		resp.Result = raw(map[string]any{"protocolVersion": p.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}},
 			"serverInfo":   map[string]string{"name": "esp32agent", "version": Version},
-			"instructions": "Drives a real iPhone through an ESP32 Agent board. Loop: screenshot, decide, one action, screenshot again."})
+			"instructions": "Drives a real iPhone through an ESP32 Agent board. Loop: screenshot, decide, one action, screenshot again. For reusable navigation, record observed page states and verified directed transitions with the graph tools. graph_path plans and graph_prepare converts one action; neither executes input nor detects the current page. Never treat successful command delivery as proof of arrival."})
 	case "ping":
 		resp.Result = raw(map[string]any{})
 	case "tools/list":
-		resp.Result = raw(map[string]any{"tools": append(append([]tool{}, tools...), localTools...)})
+		resp.Result = raw(map[string]any{"tools": append(append(append([]tool{}, tools...), localTools...), graphTools...)})
 	case "tools/call":
 		var p struct {
 			Name      string         `json:"name"`

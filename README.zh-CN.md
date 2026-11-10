@@ -305,3 +305,5 @@ Debug 版 App，`harness/fw.sh` 编译固件并拷进 App，由 App 装到板子
 ### 本地修改：BLE 配置，网络运行
 
 当前工作区的修改版 App 使用 BLE 完成首次配置，之后通过加密 Wi-Fi 连接同步状态和操作手机，开发板关闭 BLE。支持网络断线重连、IP 地址更新和恢复 BLE 配置；需配套更新 App 与固件。部署、恢复及 iOS 后台限制见 [App 网络通道说明](docs/app-network.md)。
+
+电脑端另提供 [SQLite App 导航图](docs/navigation-graph.zh-CN.md)：保存共享页面状态、有方向的操作边、参考截图和验证记录，支持按条件和可靠性寻路，通过 CLI / MCP 逐步复用操作。

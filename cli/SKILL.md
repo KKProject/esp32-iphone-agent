@@ -9,7 +9,7 @@ description: See and drive a real iPhone through an ESP32 Agent board (USB mouse
 keyboard and receives its AirPlay screen mirroring; this computer reaches it over Bluetooth. Every command prints
 JSON: `{"status":"ok","data":...}` or `{"status":"error","error":"..."}`. The MCP server (`esp32agent mcp`)
 offers the same as tools: screenshot, tap, longpress, swipe, type_text, press_key, press_button, device_info,
-plus history, intent_list, intent_show and intent_save.
+plus history, intent_list, intent_show, intent_save and the graph_* navigation tools.
 
 ## Setup (once)
 - `esp32agent pair` within 3 minutes of plugging the board into the iPhone.
@@ -60,6 +60,34 @@ After a task succeeded, save it so the next run is faster:
 3. Take a screenshot after each step and check it looks like the next step's reference screen.
 4. On a mismatch (another screen, a popup, a changed layout) drop the recorded steps and go on with the normal loop,
    using the prompt and hints.
+
+## Build and reuse an app navigation graph
+
+For reusable navigation across several routes, prefer the SQLite graph to duplicating whole intents.
+The graph tools run locally without a board; they neither detect the current page nor send input.
+
+1. Confirm page states through the normal screenshot/action/check loop. Save each distinct state with
+   `graph_node_save`: app identifier, exact build, layout profile, stable state key, readable name and required
+   environment conditions. Distinguish login, popup, keyboard, city and scroll states. Find existing states with
+   `graph_node_find` (scope + key) or `graph_node_list` (paginated). Never assume a build or reuse another layout.
+2. After an observed transition, `graph_edge_save` stores its source/target IDs, label and one 0-1000 action.
+   Prefer `from_run` + `step` from history: this copies the action and source reference image into graph storage.
+   Only the command was delivered; a newly saved edge is still unverified. Do not infer arrival from tap done.
+3. Verify the actual destination, then `graph_observe` with edge ID, actual_node, explicit success boolean and
+   evidence describing what was checked. Optionally attach an image saved with `graph_screenshot_save`.
+   If a popup or error occurs, record failure; re-localize rather than advancing the expected node.
+4. For a new navigation task, confirm the current node, then `graph_path` from it to the goal with known facts.
+   All node/edge conditions must be present in facts. Default paths exclude unverified, disabled and latest-failed
+   edges. Use include_unverified only for exploration; manually retry failed edges and verify before reuse.
+5. `graph_prepare` converts ONE edge to a normal MCP tool and pixel arguments using the current screenshot
+   width/height and confirmed current_node; it rechecks conditions/status but does not execute anything.
+   Run that action, screenshot and check, then record the result before continuing. Preserve the normal
+   permission requirements of the action even if a saved path contains it. Never batch blind actions.
+
+CLI equivalents use `esp32agent graph node-save|node-find|node-list|node-show|edge-save|edge-list|edge-show|edge-enable|observe|observations|screenshot-save|screenshot-list|path|prepare --input FILE|-`
+with the same JSON arguments as MCP. The database and managed screenshots are under the config directory's
+`navigation/` folder; existing intents are unchanged. See `docs/navigation-graph.zh-CN.md` in the repository
+for field definitions and examples. No automatic page recognition or full-app exploration is provided.
 
 ## Errors to act on
 - `busy: the app is using the phone`: the iOS app is driving right now. Wait and retry later; don't fight it.

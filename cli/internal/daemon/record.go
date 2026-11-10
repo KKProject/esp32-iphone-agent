@@ -37,6 +37,9 @@ func (s *Server) recordAction(c *Conn, req Request, err error) {
 			return
 		}
 		rec["action"], rec["x"], rec["y"] = req.Cmd, unit(req.Pts[0], w), unit(req.Pts[1], h)
+		if req.Cmd == "tap" && req.Count > 1 {
+			rec["count"] = req.Count
+		}
 		if req.Cmd == "longpress" {
 			rec["ms"] = req.Ms
 		}

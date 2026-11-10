@@ -73,6 +73,8 @@ esp32agent skill install                         # Claude Code 技能（操作�
 
 MCP 工具：`screenshot`（返回图片）、`tap`、`longpress`、`swipe`、`type_text`、`press_key`、`press_button`、`device_info`，以及 `history`、`intent_list`、`intent_show`、`intent_save`。操作循环是：截图、判断、做一步、再截图，见 [SKILL.md](SKILL.md)。
 
+新增 `graph_*` 工具和 `esp32agent graph OP --input FILE|-`：用 SQLite 保存 App 页面状态、有方向的动作边、参考截图和验证记录，并按前置条件、成功率和验证时间寻路。`graph_path` 规划路线，`graph_prepare` 换算单步坐标；实际操作后仍需核对并记录结果。详见 [导航图使用说明](../docs/navigation-graph.zh-CN.md)。
+
 ## 历史记录和意图
 
 daemon 会像 iOS App 记录运行一样，记下每个操作和截图：配置目录里的 `runs/<yyyyMMdd-HHmmss>/steps.jsonl`（操作用 0–1000 的屏幕单位，画面存成 480 像素宽的 JPEG）。空闲 10 分钟后或运行 `history new` 时开始新的一次运行；保留最新的 100 次。所有内容都不会离开这台电脑。

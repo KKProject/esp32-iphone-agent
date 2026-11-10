@@ -29,7 +29,7 @@ func TestActionsAreRecordedAndKeysPaced(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	os.WriteFile(config.CalibrationPath(s.Dir, "246f28aa6ad5"), []byte(`{"w":400,"h":860,"moves":"axis"}`), 0o600)
 
-	if r, _ := call(t, c, Request{Cmd: "tap", Pts: []float64{240, 520}}); r.Status != "ok" {
+	if r, _ := call(t, c, Request{Cmd: "tap", Pts: []float64{240, 520}, Count: 2}); r.Status != "ok" {
 		t.Fatalf("tap: %+v", r)
 	}
 	call(t, c, Request{Cmd: "keys", Text: "backspace"})
@@ -62,7 +62,7 @@ func TestActionsAreRecordedAndKeysPaced(t *testing.T) {
 	for _, st := range run.Steps {
 		got = append(got, st.JSON())
 	}
-	want := []string{`{"action": "tap", "x": 500, "y": 500}`, `{"action": "key", "combo": "backspace"}`, `{"action": "key", "combo": "backspace"}`,
+	want := []string{`{"action": "tap", "count": 2, "x": 500, "y": 500}`, `{"action": "key", "combo": "backspace"}`, `{"action": "key", "combo": "backspace"}`,
 		`{"action": "type", "text": "拿铁"}`, `{"action": "type", "text": "ok"}`, `{"action": "swipe", "x1": 500, "x2": 500, "y1": 865, "y2": 192}`}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("recorded:\n%s", strings.Join(got, "\n"))
